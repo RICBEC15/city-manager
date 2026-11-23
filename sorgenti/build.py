@@ -1,12 +1,24 @@
-# Costruisce city-manager/city-manager.html (un solo file, funziona anche offline)
+# Costruisce index.html (un solo file, funziona anche offline)
 # Uso: python3 build.py
 import base64, os, glob
 d = os.path.dirname(os.path.abspath(__file__))
 g = os.path.join(d, '..', 'lib')
-tpl = open(os.path.join(d, '00-template.html'), encoding='utf-8').read()
-js = '\n'.join(open(f, encoding='utf-8').read() for f in sorted(glob.glob(os.path.join(d, '[0-9][0-9]-*.js'))))
-three = open(os.path.join(g, 'three.min.js'), encoding='utf-8').read()
-bg = base64.b64encode(open(os.path.join(g, 'sfondo-menu.jpg'), 'rb').read()).decode()
-out = tpl.replace('/*GAME*/', js).replace('SFONDO', bg).replace('/*THREE_LIB*/', three)
-open(os.path.join(d, '..', 'index.html'), 'w', encoding='utf-8').write(out)
+OUT = os.path.join(d, '..', 'index.html')
+rd = lambda p: open(p, encoding='utf-8').read()
+b64 = lambda p: base64.b64encode(open(p, 'rb').read()).decode()
+tpl = rd(os.path.join(d, '00-template.html'))
+files = sorted(glob.glob(os.path.join(d, '[0-9][0-9]-*.js')))
+data = [f for f in files if os.path.basename(f).startswith('00-')]  # solo dati: script a parte, così la barra avanza mentre si scarica
+js = '\n'.join(rd(f) for f in files if f not in data)
+three = rd(os.path.join(g, 'three.min.js'))
+# immagini della schermata di caricamento (sorgenti/caricamento/N.webp + N-sfondo.webp sfocato per i bordi)
+imgs = sorted(glob.glob(os.path.join(d, 'caricamento', '[0-9].webp')))
+boot = ''.join('<div class="bi" style="background-image:url(data:image/webp;base64,%s),url(data:image/webp;base64,%s)"></div>' % (b64(p), b64(p[:-5] + '-sfondo.webp')) for p in imgs)
+dt = [rd(f) for f in data]
+tot = len(three) + sum(map(len, dt)) + len(js); acc = len(three); dh = ''
+for t in dt:
+    acc += len(t); dh += '<script>\n%s\n</script>\n<script>bootP(%.2f)</script>\n' % (t, acc / tot * 0.85)
+out = tpl.replace('SFONDO', b64(os.path.join(g, 'sfondo-menu.jpg'))).replace('<!--BOOTIMG-->', boot).replace('bootP(THREE)', 'bootP(%.2f)' % (len(three) / tot * 0.85))
+out = out.replace('/*GAME*/', js).replace('<!--DATA-->', dh).replace('/*THREE_LIB*/', three)
+open(OUT, 'w', encoding='utf-8').write(out)
 print('ok', len(out))
