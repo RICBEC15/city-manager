@@ -96,13 +96,14 @@ function* newGameG(o) {
   resetWorld();
   S = newState(o);
   yield* sub(initMap(S.seed), 0, 0.8);
-  TILES.fill(0); for (let z = 39; z <= 41; z++) for (let x = 38; x <= 40; x++) TILES[z * NT + x] = 1; gateVer++; actWin(); updateTileTex();
-  preplace(); yield 0.9;
+  TILES.fill(0); if (!o.pickStart) { for (let z = 39; z <= 41; z++) for (let x = 38; x <= 40; x++) TILES[z * NT + x] = 1; } gateVer++; actWin(); updateTileTex();
+  if (!o.pickStart) preplace(); yield 0.9;
   Object.assign(stats, { fillRatio: 1, hhCap: 0, hh: 0, jobs: 0, pop: 0, demand: { R: 80, C: 15, I: 55, O: 0 }, happy: 60, fac: {}, ages: [0.22, 0.1, 0.53, 0.15], tourists: 0, riders: 0, transitShare: 0 });
   cam.tx = MAPH[MAPID] ? -640 : -700; cam.tz = MAPH[MAPID] ? 640 : -500; cam.dist = MAPH[MAPID] ? 2600 : 1400; cam.yaw = 0.5; cam.pitch = 0.9;
   S.lastDay = 3; updateWeather(); computeNetworks(); computeGrids();
   S.feed = []; addFeed('happy');
   startPlay();
+  if (o.pickStart) { startPick(); return; }
   toast(L('Benvenuto sindaco! Collega una strada all\'autostrada, poi disegna le zone. Servono elettricità e acqua.', 'Welcome, mayor! Connect a road to the highway, then paint zones. You will need power and water.'), 9000);
 }
 function startPlay() {
@@ -230,11 +231,12 @@ function menuNew() {
     <div class="r"><span>${L('Clima', 'Climate')}</span><select id="ngClim">${Object.keys(CLIM).map(k => `<option value="${k}">${CLIM[k].n()}</option>`).join('')}</select></div>
     <div class="r"><span>${L('Emisfero sud (stagioni invertite)', 'Southern hemisphere (seasons reversed)')}</span><input type="checkbox" id="ngSouth"></div>
     <div class="r"><span>${L('Guida a sinistra', 'Left-hand traffic')}</span><input type="checkbox" id="ngLeft"></div>
+    <div class="r"><span>${L('Scegli tu la casella di partenza sulla mappa', 'Choose your starting tile on the map')}</span><input type="checkbox" id="ngPick" checked></div>
     <div class="r"><span>${L('Soldi illimitati', 'Unlimited money')}</span><input type="checkbox" id="ngMoney"></div>
     <div class="r"><span>${L('Tutto sbloccato subito', 'Everything unlocked')}</span><input type="checkbox" id="ngAll"></div>
     <div class="r"><span>${L('Disastri naturali (incendi boschivi, grandine, tornado...)', 'Natural disasters (forest fires, hail, tornadoes...)')}</span><input type="checkbox" id="ngDis"></div>
     <div class="note">${L('Si parte con 9 caselle di terreno (14,7 km²), poi se ne comprano altre fino a 6.400: tutta la mappa da 100 km per 100 km. Le mappe delle città usano le altezze e l\'acqua vere, prese dai dati satellitari.', 'You start with 9 land tiles (14.7 km²) and can buy more, up to 6,400: the whole 100 by 100 km map. The city maps use the real heights and water, taken from satellite data.')}</div>
-    <button class="big" onclick="newGameAsync({name:$('ngName').value.trim()||'City',map:$('ngMap').value,seed:(parseInt($('ngSeed').value)||1),unlimited:$('ngMoney').checked,unlockAll:$('ngAll').checked,disasters:$('ngDis').checked,leftHand:$('ngLeft').checked,theme:$('ngTheme').value,climate:$('ngClim').value,south:$('ngSouth').checked})">🏗️ ${L('Inizia', 'Start')}</button>
+    <button class="big" onclick="newGameAsync({name:$('ngName').value.trim()||'City',map:$('ngMap').value,seed:(parseInt($('ngSeed').value)||1),unlimited:$('ngMoney').checked,unlockAll:$('ngAll').checked,disasters:$('ngDis').checked,leftHand:$('ngLeft').checked,theme:$('ngTheme').value,climate:$('ngClim').value,south:$('ngSouth').checked,pickStart:$('ngPick').checked})">🏗️ ${L('Inizia', 'Start')}</button>
     <button class="big" onclick="menuMain()">${L('Indietro', 'Back')}</button>`;
 }
 function menuSaves() {

@@ -7,3 +7,5 @@ City builder 3D originale in un solo file HTML (Three.js). Si gioca aprendo `ind
 - `index.html`: il gioco pronto, tutto in un file.
 - `sorgenti/`: il codice diviso per parti (`NN-*.js`) e `build.py`, che li unisce in `index.html` (`python3 sorgenti/build.py`).
 - `lib/`: Three.js e l'immagine del menu, usate da `build.py`.
+
+Le autostrade delle mappe delle città vere (svincoli, ponti e gallerie compresi) vengono da OpenStreetMap, tramite Overture Maps: dati © contributori di OpenStreetMap, licenza ODbL (https://www.openstreetmap.org/copyright).
