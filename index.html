@@ -183,7 +183,7 @@ const MAPDATA = {
 };
 
 </script>
-<script>bootP(0.75)</script>
+<script>bootP(0.74)</script>
 <script>
 'use strict';
 // =====================================================================
@@ -2040,7 +2040,7 @@ function computeNetworks() {
   for (const b of buildings.values()) {
     if (b.ruin) continue; const s = segs.get(b.seg); if (!s) continue;
     const c = C('n' + s.a); b.net = c;
-    const z = ZT[b.zone]; const people = (b.hh ? b.occ * 2.6 : b.occ);
+    const z = ZT[b.zone]; const people = (b.hh ? (b.res || 0) : (b.wk || 0));
     const pu = (z.k === 'I' ? 0.006 : z.k === 'C' || z.k === 'O' ? 0.004 : 0.0022) * Math.max(people, 1) * policyPow * winter * (1.12 - 0.06 * (b.level || 1)) * feeCons('power');
     c.pU += pu; c.wU += people * feeCons('water'); c.sU += people * 1.0;
     b.pu = pu;
@@ -2079,7 +2079,7 @@ function computeCoverage() {
     if (!d.r) continue;
     const r = d.r * (0.75 + 0.25 * bud(d.cat)) * extMul(sv, 'rM');
     let load = 0; const list = [];
-    bldNear(sv.x, sv.z, r, b => { if (sv.dist && distGrid[gIdx(b.x, b.z)] !== sv.dist) return; list.push(b); load += b.hh ? b.occ * 2.6 : b.occ * 0.5; });
+    bldNear(sv.x, sv.z, r, b => { if (sv.dist && distGrid[gIdx(b.x, b.z)] !== sv.dist) return; list.push(b); load += b.hh ? (b.res || 0) : (b.wk || 0) * 0.5; });
     const capEff = d.cap ? clamp(d.cap * extMul(sv, 'capM') * bud(d.cat) / Math.max(load, 1), 0.2, 1) * (d.cat === 'health' && (sv.med ?? 100) < 10 ? 0.5 : 1) : 1;
     sv.load = load; sv.capEff = capEff;
     let full = 1;
@@ -2249,10 +2249,10 @@ let lists = { res: [], job: [], com: [], ind: [], hotel: [], off: [] };
 function refreshLists() {
   lists = { res: [], job: [], com: [], ind: [], off: [] };
   for (const b of buildings.values()) {
-    if (b.ruin || b.aband || b.occ <= 0) continue; const z = ZT[b.zone].k;
-    if (b.hh) lists.res.push(b);
-    if (b.jobs) lists.job.push(b);
-    if (z === 'C' || z === 'M') lists.com.push(b);
+    if (b.ruin || b.aband || ((b.occ || 0) <= 0 && (b.wk || 0) <= 0)) continue; const z = ZT[b.zone].k;
+    if (b.hh && b.occ) lists.res.push(b);
+    if (b.jobs && b.wk) lists.job.push(b);
+    if ((z === 'C' || z === 'M') && b.wk) lists.com.push(b);
     if (z === 'I') lists.ind.push(b);
     if (z === 'O') lists.off.push(b);
   }
@@ -2430,7 +2430,7 @@ function computeRidership() {
     ln.riders = 0; if (!ln.ok) continue;
     const d = LK[ln.kind]; let res = 0, jobs = 0;
     const seen = new Set();
-    for (const st of lineStops(ln)) bldNear(st.x, st.z, d.catch, b => { if (seen.has(b.id)) return; seen.add(b.id); if (b.cov) b.cov.transit = Math.max(b.cov.transit, 1); res += b.hh ? b.occ * 2.6 : 0; jobs += b.jobs ? b.occ : 0; });
+    for (const st of lineStops(ln)) bldNear(st.x, st.z, d.catch, b => { if (seen.has(b.id)) return; seen.add(b.id); if (b.cov) b.cov.transit = Math.max(b.cov.transit, 1); res += b.hh ? (b.res || 0) : 0; jobs += b.wk || 0; });
     const freq = clamp(ln.nveh / Math.max(1, lineStops(ln).length * 0.5), 0.2, 1.5) * (ln.sched ? 0.85 : 1);
     const price = S.policies.freeTransit ? 1.4 : clamp(1.6 - ln.price / (d.price * 2.5), 0.3, 1.3);
     ln.riders = Math.round(Math.min(Math.sqrt(res * jobs) * 0.35 * freq * price, lineCap(ln) * ln.nveh * 3));
@@ -2540,21 +2540,23 @@ function spawnIntercity() {
 // ---------- pedoni (solo vicino alla telecamera) ----------
 const peds = []; const pedPool = new InstPool(boxGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), 900);
 const PED_COLS = [0xc0392b, 0x2980b9, 0x27ae60, 0xf1c40f, 0x8e44ad, 0x34495e, 0xe67e22, 0xecf0f1, 0x16a085];
+let pedT = 0;
 function updatePeds(dt) {
   const want = cam.dist < 600 || walk.on ? 700 : 0;
   const cx = walk.on ? walk.x : cam.tx, cz = walk.on ? walk.z : cam.tz;
+  // solo persone vere che stanno camminando (un pedone = un abitante, finché arriva)
   while (peds.length > want) { const p = peds.pop(); pedPool.remove(p.h.i, 'i'); }
-  let tries = 0;
-  while (peds.length < want && tries++ < 20) {
-    const ids = [...segsNear(cx + (rand() - 0.5) * 700, cz + (rand() - 0.5) * 700, 60)];
-    if (!ids.length) break; const s = segs.get(pick(ids)); if (!s || !RT[s.type].zone && !RT[s.type].ped) continue;
-    if (!s.cells.some(id => cells[id]?.b) && !RT[s.type].ped) continue;
-    const p = { seg: s.id, a: rand() * s.len, side: rand() < 0.5 ? 1 : -1, dir: rand() < 0.5 ? 1 : -1, sp: 1 + rand() * 0.6, h: { i: -1 }, col: pick(PED_COLS) };
-    p.h.i = pedPool.add(p.h); peds.push(p);
+  if (want && (pedT = (pedT || 0) + 1) % 15 === 1) {
+    const shown = new Set(peds.map(p => p.pid));
+    for (const w of popWalkersNear(cx, cz, 800, want)) {
+      if (peds.length >= want) break; if (shown.has(w.id)) continue; const o = w.ws, s = o && segs.get(o.seg); if (!s) continue;
+      const p = { pid: w.id, seg: s.id, a: clamp(o.along ?? rand() * s.len, 0, s.len), side: o.side || (rand() < 0.5 ? 1 : -1), dir: rand() < 0.5 ? 1 : -1, sp: 1 + rand() * 0.6, h: { i: -1 }, col: PED_COLS[w.id % PED_COLS.length] };
+      p.h.i = pedPool.add(p.h); peds.push(p);
+    }
   }
   for (let i = peds.length - 1; i >= 0; i--) {
-    const p = peds[i], s = segs.get(p.seg);
-    if (!s || Math.hypot(s.pts[0].x - cx, s.pts[0].z - cz) > 900) { pedPool.remove(p.h.i, 'i'); peds.splice(i, 1); continue; }
+    const p = peds[i], s = segs.get(p.seg), w = POP.p.get(p.pid);
+    if (!s || !w || w.s !== ST.VIAGGIO || w.m !== 'w' || Math.hypot(s.pts[0].x - cx, s.pts[0].z - cz) > 900) { pedPool.remove(p.h.i, 'i'); peds.splice(i, 1); continue; }
     p.a += p.dir * p.sp * dt; if (p.a < 0 || p.a > s.len) { p.dir *= -1; p.a = clamp(p.a, 0, s.len); }
     const f = segFrame(s, p.a), off = RT[s.type].w / 2 - 1;
     setInst(pedPool.mesh, p.h.i, f.x + f.nx * off * p.side, f.y + 0.15, f.z + f.nz * off * p.side, Math.atan2(f.tx * p.dir, f.tz * p.dir), 0.55, 1.7, 0.35);
@@ -2812,7 +2814,7 @@ function updateBuilding(b) {
   if (b.cons > 0) { b.cons--; if (b.cons <= 0) { drawBuilding(b); S.bxp = (S.bxp || 0) + 3; } else return; }
   const z = ZT[b.zone], cov = b.cov || {}, k = gIdx(b.x, b.z);
   const air = AIR[k], gr = GROUND[k], no = NOIS[k], lv = LV[k];
-  const people = b.hh ? b.occ * 2.6 : b.occ;
+  const people = b.hh ? (b.res || 0) : (b.wk || 0);
   // servizi di base
   if (!b.pow) b.noPow++; else b.noPow = 0;
   if (!b.wat) b.noWat++; else b.noWat = 0;
@@ -2849,20 +2851,14 @@ function updateBuilding(b) {
   b.fac = f; b.happy = lerp(b.happy, clamp(h, 0, 100), 0.3);
   // abitanti e lavoratori
   if (b.aband) {
-    b.occ = 0;
+    if (b.occ || b.wk) popEvict(b, 'move');
     if (b.pow && b.wat && b.happy > 40) { b.abT = (b.abT || 0) + 1; if (b.abT > 20) { b.aband = 0; b.abT = 0; tintParts(b); } }
     return;
   }
-  if (b.hh) {
-    const free = b.hh - b.occ;
-    if (free > 0 && stats.demand.R > 10 && b.happy > 30 && rand() < 0.6) b.occ += Math.max(1, Math.round(free * 0.25 * rand()));
-    if (b.happy < 25 && b.occ > 0 && rand() < 0.3) b.occ--;
-  } else {
-    const target = Math.round(b.jobs * (stats.fillRatio || 0));
-    b.occ = b.occ < target ? Math.min(target, b.occ + Math.max(1, Math.ceil(b.jobs * 0.2))) : target;
-  }
+  // persone vere: arrivano da fuori, se ne vanno, vengono assunte (25-popolazione.js)
+  popBuilding(b);
   // abbandono
-  if (b.noPow > 60 || b.noWat > 60 || b.garb > 200 || (b.happy < 10 && b.occ > 0 && rand() < 0.1)) { b.aband = 1; b.occ = 0; tintParts(b, 0x5a524a); addFeed('aband', b); return; }
+  if (b.noPow > 60 || b.noWat > 60 || b.garb > 200 || (b.happy < 10 && b.occ > 0 && rand() < 0.1)) { popEvict(b, 'move'); b.aband = 1; b.occ = 0; tintParts(b, 0x5a524a); addFeed('aband', b); return; }
   // salita di livello
   const maxL = { 1: 5, 2: 5, 3: 5, 4: 3, 10: 5, 5: 3, 6: 5, 7: 5, 8: 3, 9: 1, 11: 3 }[zl(b.zone)];
   const score = lv * 0.6 + b.happy * 0.5 + (b.hh ? b.edu * 20 : 0) + (cov.park || 0);
@@ -2895,7 +2891,7 @@ function updateFires() {
     if (b.fire > 3) { burning.delete(b); b.fire = 0; ruinBuilding(b); }
   }
 }
-function ruinBuilding(b) { b.ruin = 1; b.occ = 0; b.ruinT = 0; drawBuilding(b); }
+function ruinBuilding(b) { popEvict(b, 'ruin'); b.ruin = 1; b.occ = 0; b.ruinT = 0; drawBuilding(b); }
 const firePts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xff7a20, size: 9, transparent: true, opacity: 0.9, depthWrite: false }));
 firePts.frustumCulled = false; scene.add(firePts);
 function drawFires() {
@@ -2986,37 +2982,37 @@ function computeGrids() {
 }
 // ---------- statistiche e domanda ----------
 function computeStats() {
-  let pop = 0, hh = 0, hhCap = 0, jobs = 0, jobsC = 0, jobsI = 0, jobsO = 0, happyS = 0, happyN = 0, sick = 0, dead = 0, crime = 0, garb = 0, eduS = 0, edu = [0, 0, 0, 0], prodI = 0, lvS = 0;
+  let filled = 0, pop = 0, hh = 0, hhCap = 0, jobs = 0, jobsC = 0, jobsI = 0, jobsO = 0, happyS = 0, happyN = 0, sick = 0, dead = 0, crime = 0, garb = 0, eduS = 0, edu = [0, 0, 0, 0], prodI = 0, lvS = 0;
   const fac = {};
   for (const b of buildings.values()) {
     if (b.ruin) continue;
     if (b.hh) {
-      const p = b.occ * 2.6; pop += p; hh += b.occ; if (!b.aband) hhCap += b.hh;
+      const p = b.res || 0; pop += p; hh += b.occ; if (!b.aband) hhCap += b.hh;
       const e = b.edu; edu[e < 0.25 ? 0 : e < 0.5 ? 1 : e < 0.75 ? 2 : 3] += p; eduS += e * p;
       happyS += b.happy * p; happyN += p; sick += b.sick; dead += b.dead;
       if (b.fac) for (const k in b.fac) fac[k] = (fac[k] || 0) + b.fac[k] * p;
       lvS += LV[gIdx(b.x, b.z)] * p;
     }
-    if (b.jobs && !b.aband) { jobs += b.jobs; const k = ZT[b.zone].k; if (k === 'C' || k === 'M') jobsC += b.jobs; if (k === 'I') { jobsI += b.jobs; prodI += b.occ * (b.spec ? 1.3 : 1) * (S.policies.heavy ? 0.95 : 1) * (S.policies.curfew ? 0.92 : 1); } if (k === 'O') jobsO += b.jobs; }
+    if (b.jobs && !b.aband) { filled += b.wk || 0; jobs += b.jobs; const k = ZT[b.zone].k; if (k === 'C' || k === 'M') jobsC += b.jobs; if (k === 'I') { jobsI += b.jobs; prodI += b.occ * (b.spec ? 1.3 : 1) * (S.policies.heavy ? 0.95 : 1) * (S.policies.curfew ? 0.92 : 1); } if (k === 'O') jobsO += b.jobs; }
     crime += b.crime; garb += b.garb;
   }
   // industria specializzata: materie prime prodotte e richieste dall'industria
   const raw = {}; for (const k of RAWK) raw[k] = { p: 0, n: 0 };
-  for (const sv of svcs.values()) { const d = SV[sv.type]; if (!d.spec || !sv.on) continue; jobs += d.jobs; jobsI += d.jobs; sv.prod = Math.round(160 * clamp(sv.res ?? 0.5, 0, 1) * clamp(S.budget.spec / 100, 0.5, 1.5) * (0.6 + 0.4 * (stats.fillRatio ?? 1))); raw[d.spec.prod].p += sv.prod; }
+  for (const sv of svcs.values()) { const d = SV[sv.type]; if (!d.spec || !sv.on) continue; jobs += d.jobs; jobsI += d.jobs; jobFill(sv, -sv.id); filled += sv.wk || 0; sv.prod = Math.round(160 * clamp(sv.res ?? 0.5, 0, 1) * clamp(S.budget.spec / 100, 0.5, 1.5) * (0.6 + 0.4 * (sv.wk || 0) / Math.max(1, d.jobs))); raw[d.spec.prod].p += sv.prod; }
   for (const b of buildings.values()) if (b.spec && !b.ruin && !b.aband) raw[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[b.spec]].p += b.occ * 1.5;
   for (const k of RAWK) raw[k].n = Math.round(prodI * RAWSH[k] * 0.8 + (k === 'food' ? pop * 0.03 : 0)); stats.raw = raw;
   const n = Math.max(1, buildings.size);
-  stats.pop = Math.round(pop); stats.hh = hh; stats.hhCap = hhCap; stats.jobs = jobs; stats.jobsC = jobsC; stats.jobsI = jobsI; stats.jobsO = jobsO;
+  stats.pop = Math.round(pop) + POP.hl; stats.hh = hh; stats.hhCap = hhCap; stats.jobs = jobs; stats.jobsC = jobsC; stats.jobsI = jobsI; stats.jobsO = jobsO;
   stats.happy = happyN ? happyS / happyN : 60; stats.sick = sick; stats.dead = dead; stats.crime = crime / n; stats.garb = garb;
   stats.eduAvg = pop ? eduS / pop : 0; stats.edu = edu; stats.lv = pop ? lvS / pop : 0;
   for (const k in fac) fac[k] /= Math.max(1, happyN); stats.fac = fac;
-  stats.workforce = pop * 0.6;
+  // lavoratori veri: adulti che abitano qui, pendolari veri da fuori, disoccupati veri
+  stats.workforce = POP.adults;
   const outside = outsideNodes().length > 0;
-  const commuters = outside ? Math.min(jobs * 0.35, 150 + pop * 0.15) : 0;
-  stats.commuters = commuters;
-  stats.fillRatio = jobs > 0 ? clamp((stats.workforce * 0.97 + commuters) / jobs, 0, 1) : 1;
-  stats.filled = Math.min(jobs, stats.workforce * 0.97 + commuters);
-  stats.unemp = stats.workforce > 0 ? clamp(1 - Math.min(jobs, stats.workforce * 0.97) / stats.workforce, 0.02, 1) : 0;
+  stats.commuters = POP.comm;
+  stats.fillRatio = jobs > 0 ? clamp(filled / jobs, 0, 1) : 1;
+  stats.filled = filled;
+  stats.unemp = POP.adults > 0 ? clamp(POP.unemp.size / POP.adults, 0, 1) : 0;
   stats.goodsP = prodI; stats.goodsC = jobsC * 0.7 + pop * 0.04;
   let cong = 0, ce = 0; for (const e of activeEdges) { if (e.rail || !e.lanes) continue; const c = e.cars.reduce((a, l) => a + l.length, 0) / (e.lanes * Math.max(e.len, 20) / 7); cong += clamp(c, 0, 1); ce++; }
   stats.congestion = ce ? cong / ce : 0;
@@ -3026,9 +3022,8 @@ function computeStats() {
   stats.attr = attr;
   stats.tourists = Math.round(attr * 35 * (UPG.has('tour1') ? 1.25 : 1) * (outside ? 1 : 0.2) * (0.6 + stats.happy / 100)) + stats.cruise * 450 + (stats.icbM || 0) * 40;
   // età (lenta)
-  const a = stats.ages, bt = 0.0004 * (stats.happy / 60), dt = 0.0003;
-  a[0] += bt - a[0] * 0.002; a[1] += a[0] * 0.002 - a[1] * 0.004; a[2] += a[1] * 0.004 - a[2] * 0.0008 + (stats.demand.R > 50 ? 0.0002 : 0); a[3] += a[2] * 0.0008 - dt;
-  const sa = a.reduce((x, y) => x + y, 0); for (let i = 0; i < 4; i++) a[i] = clamp(a[i] / sa, 0.03, 0.8);
+  // età vere degli abitanti (bambini <13, ragazzi <18, adulti <65, anziani)
+  { const g = POP.ages, n = g[0] + g[1] + g[2] + g[3]; if (n) stats.ages = g.map(x => x / n); }
 }
 function computeDemand() {
   const p = stats.pop, d = stats.demand, t = { R: S.tax.R, C: taxEff('C'), I: taxEff('I'), O: S.tax.O };
@@ -3057,8 +3052,8 @@ function budgetNow() {
   const eco = UPG.has('eco1') ? 1.1 : 1;
   for (const b of buildings.values()) {
     if (b.ruin || b.aband) continue; const k = ZT[b.zone].k, lm = 0.8 + 0.2 * b.level;
-    if (b.hh) rTax += b.occ * 2.6 * 1.25 * lm * (ZT[b.zone].cheap ? 0.6 : 1) * rTaxFor(b);
-    if (b.jobs) { const w = b.occ * lm; if (k === 'C' || k === 'M') cTax += w * 1.7; else if (k === 'I') iTax += w * (b.spec ? 1.7 : 1.4); else if (k === 'O') oTax += w * 2.3; }
+    if (b.hh) rTax += (b.res || 0) * 1.25 * lm * (ZT[b.zone].cheap ? 0.6 : 1) * rTaxFor(b);
+    if (b.jobs) { const w = (b.wk || 0) * lm; if (k === 'C' || k === 'M') cTax += w * 1.7; else if (k === 'I') iTax += w * (b.spec ? 1.7 : 1.4); else if (k === 'O') oTax += w * 2.3; }
   }
   inc.res = rTax; inc.com = cTax * taxEff('C') * eco; inc.ind = iTax * taxEff('I') * eco; inc.off = oTax * S.tax.O * eco;
   inc.tour = stats.tourists * 2.5;
@@ -3092,9 +3087,8 @@ function monthly() {
   for (const l of S.loans) l.left--; S.loans = S.loans.filter(l => l.left > 0);
   S.hist.push({ t: Math.floor(S.time / 24), pop: stats.pop, money: Math.round(S.money), inc: Math.round(bg.ti), exp: Math.round(bg.te), happy: Math.round(stats.happy), unemp: Math.round(stats.unemp * 100), tour: stats.tourists, jobs: stats.jobs });
   if (S.hist.length > 120) S.hist.shift();
-  stats.births = Math.round(stats.pop * 0.011 * stats.happy / 60); stats.deaths = Math.round(stats.pop * 0.007 + stats.sick * 0.05);
-  // i morti restano nelle case finché non arriva il carro funebre
-  for (let i = 0; i < stats.deaths && lists.res.length; i++) { const b = pick(lists.res); b.dead++; }
+  // nascite e morti vere (i morti restano nelle case finché non arriva il carro funebre)
+  popMonth();
   { const dp = stats.pop - (S.lastPopXP ?? stats.pop); if (dp > 0) { S.maxPop = Math.max(S.maxPop || 0, stats.pop); xpMsg('+' + fmtNum(dp) + ' XP ' + L('popolazione aumentata', 'population grew')); }
     const hp = Math.round(stats.happy), dh = hp - (S.maxHappyXP ?? hp); if (dh > 0) addXP(dh * 20, L('felicità dei cittadini aumentata', 'citizens happier'));
     S.lastPopXP = stats.pop; S.maxHappyXP = Math.max(S.maxHappyXP ?? hp, hp); }
@@ -3219,7 +3213,7 @@ function rollDisaster(force) {
   else { const c = ownedCenter(); disasterMsg(L('☄️ Meteorite!', '☄️ Meteor strike!'), c.x, c.z); shake.t = 4; let n = 0; bldNear(c.x, c.z, 180, b => { ruinBuilding(b); n++; }); clearTrees(() => true, c.x, c.z, 200); casualties(n * 5, c.x, c.z); }
 }
 function disasterMsg(t, x, z) { toast(t + (warned(x, z) ? L(' La sirena ha avvisato i cittadini.', ' The siren warned citizens.') : ''), 8000); addFeed('disaster'); }
-function casualties(n, x, z) { const k = (1 - shelterSave()) * (warned(x, z) ? 0.4 : 1); const c = Math.round(n * k); S.casualties += c; for (let i = 0; i < c && lists.res.length; i++) pick(lists.res).dead++; }
+function casualties(n, x, z) { const k = (1 - shelterSave()) * (warned(x, z) ? 0.4 : 1); const c = Math.round(n * k); S.casualties += c; for (let i = 0, t = 0; i < c && lists.res.length && t < c * 4; t++) if (popKillIn(pick(lists.res))) i++; }
 function lightning() { const c = ownedCenter(); let best = null; bldNear(c.x, c.z, 300, b => { if (!best || b.h > best.h) best = b; }); if (best && rand() < 0.5) startFire(best); flash = 1; }
 let flash = 0;
 function updateDisasters(dt) {
@@ -3979,7 +3973,7 @@ function delDistrict(id) { distEach(k => { if (distGrid[k] === id) distGrid[k] =
 function districtStats(id) {
   const r = { pop: 0, hh: 0, jobs: 0, work: 0, happy: 0, nb: 0, edu: 0, lv: 0, cells: 0, svc: 0, cov: { health: 0, police: 0, fire: 0, edu1: 0, park: 0, garb: 0, transit: 0 } };
   distEach(k => { if (distGrid[k] === id) { r.cells++; r.lv += LV[k]; } });
-  for (const b of buildings.values()) { if (distGrid[gIdx(b.x, b.z)] !== id) continue; r.nb++; if (b.hh) { r.pop += b.occ * 2.6; r.hh += b.occ; r.happy += b.happy * b.occ; r.edu += (b.edu || 0) * b.occ; } else { r.jobs += b.jobs || 0; r.work += b.occ; } for (const k in r.cov) r.cov[k] += Math.min(1, b.cov?.[k] || 0); }
+  for (const b of buildings.values()) { if (distGrid[gIdx(b.x, b.z)] !== id) continue; r.nb++; if (b.hh) { r.pop += (b.res || 0); r.hh += b.occ; r.happy += b.happy * b.occ; r.edu += (b.edu || 0) * b.occ; } else { r.jobs += b.jobs || 0; r.work += b.wk || 0; } for (const k in r.cov) r.cov[k] += Math.min(1, b.cov?.[k] || 0); }
   for (const sv of svcs.values()) if (distGrid[gIdx(sv.x, sv.z)] === id) r.svc++;
   return r;
 }
@@ -4120,9 +4114,9 @@ function refreshPanels() {
       if (o.ruin) h += `<div style="color:var(--bad)">${L('Distrutto. Le macerie verranno tolte e si ricostruirà.', 'Destroyed. Rubble will be cleared and it will be rebuilt.')}</div>`;
       if (o.aband) h += `<div style="color:var(--bad)">${L('Abbandonato! Manca qualcosa: guarda sotto.', 'Abandoned! Something is missing: see below.')}</div>`;
       if (o.fire) h += `<div style="color:var(--bad)">🔥 ${L('Sta bruciando!', 'On fire!')}</div>`;
-      if (o.hh) h += row(L('Famiglie', 'Households'), `${o.occ} / ${o.hh}`) + row(L('Abitanti', 'Residents'), fmtNum(o.occ * 2.6));
-      if (o.jobs) { const k = z.k, pr = profitOf(o); h += row(L('Lavoratori', 'Workers'), `${o.occ} / ${o.jobs}`) + row(L('Istruzione richiesta', 'Education needed'), k === 'O' ? L('alta (laurea)', 'high (degree)') : k === 'I' ? L('bassa', 'low') : L('media', 'medium')) + row(L('Redditività', 'Profitability'), pr > 0.66 ? L('guadagna bene', 'profitable') : pr > 0.33 ? L('così così', 'break-even') : L('in perdita', 'losing money')) + bar(pr, pr > 0.5 ? 'var(--good)' : 'var(--bad)');
-        if (k === 'I') h += row(L('Produce', 'Produces'), o.spec ? RAWN()[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[o.spec]][1] + ' · ' + fmtNum(Math.round(o.occ * 1.5)) + ' t/' + L('mese', 'mo') : L('merci', 'goods') + ' · ' + fmtNum(Math.round(o.occ)) + ' ' + L('al mese', 'per month'));
+      h += popCardHTML(o); // persone vere: famiglie, abitanti, impiegati e clienti con il loro massimo
+      if (o.jobs) { const k = z.k, pr = profitOf(o); h += row(L('Istruzione richiesta', 'Education needed'), k === 'O' ? L('alta (laurea)', 'high (degree)') : k === 'I' ? L('bassa', 'low') : L('media', 'medium')) + row(L('Redditività', 'Profitability'), pr > 0.66 ? L('guadagna bene', 'profitable') : pr > 0.33 ? L('così così', 'break-even') : L('in perdita', 'losing money')) + bar(pr, pr > 0.5 ? 'var(--good)' : 'var(--bad)');
+        if (k === 'I') h += row(L('Produce', 'Produces'), o.spec ? RAWN()[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[o.spec]][1] + ' · ' + fmtNum(Math.round((o.wk || 0) * 1.5)) + ' t/' + L('mese', 'mo') : L('merci', 'goods') + ' · ' + fmtNum(Math.round(o.wk || 0)) + ' ' + L('al mese', 'per month'));
         if (k === 'C' || k === 'M') h += row(L('Vende', 'Sells'), TAXPN()[TAXP.C[o.id % TAXP.C.length]]); }
       h += row(L('Felicità', 'Happiness'), Math.round(o.happy) + '%') + bar(o.happy / 100, o.happy > 50 ? 'var(--good)' : 'var(--bad)');
       h += row('⚡ / 💧 / 🚽', `${o.pow ? '✅' : '❌'} ${o.wat ? '✅' : '❌'} ${o.sew ? '✅' : '❌'}`);
@@ -4130,15 +4124,6 @@ function refreshPanels() {
       if (o.hh) h += row(L('Istruzione media', 'Average education'), Math.round(o.edu * 100) + '%');
       h += row(L('Valore del terreno', 'Land value'), Math.round(LV[gIdx(o.x, o.z)]));
       h += `<div class="sec">${L('Perché sono così felici', 'Why this happiness')}</div>` + (o.fac ? facList(o.fac) : '');
-      if (o.hh && o.occ) {
-        h += `<div class="sec">${L('Chi ci vive', 'Who lives here')}</div>`;
-        const r = mulberry32(o.id * 97);
-        for (let i = 0; i < Math.min(4, o.occ); i++) {
-          const nm = NAMES_F[Math.floor(r() * NAMES_F.length)] + ' ' + NAMES_P[Math.floor(r() * NAMES_P.length)], age = 4 + Math.floor(r() * 80);
-          const job = age < 6 ? L('all\'asilo', 'at preschool') : age < 19 ? L('studente', 'student') : age > 67 ? L('in pensione', 'retired') : r() < stats.unemp ? L('cerca lavoro', 'unemployed') : pick2(r, [L('impiegato', 'office worker'), L('commessa', 'shop assistant'), L('operaio', 'factory worker'), L('infermiere', 'nurse'), L('insegnante', 'teacher'), L('autista', 'driver'), L('cuoco', 'cook'), L('programmatrice', 'programmer')]);
-          h += `<div class="row"><span>${nm}, ${age}</span><span>${job} <button title="${L('Segui', 'Follow')}" style="padding:0 5px" onclick="followCitizen(${o.id},'${nm.replace(/'/g, '')}',${age},'${job.replace(/'/g, '')}')">🎥</button></span></div>`;
-        }
-      }
       h += `<div style="margin-top:10px;display:flex;gap:6px"><button onclick="destroyBuilding(selected.obj);closeSide()">🧨 ${L('Demolisci', 'Demolish')}</button></div>`;
       selBox.visible = true; selBox.position.set(o.x, o.y, o.z); selBox.rotation.y = o.ang; selBox.scale.set(o.cw * CELL, (o.h || 8) + 3, o.cd * CELL);
     } else if (selected.kind === 'svc') {
@@ -4188,15 +4173,16 @@ function refreshPanels() {
   } else if (sideOpen === 'stats') {
     h += head('📊 ' + L('Statistiche', 'Statistics'));
     h += citizensHTML();
-    h += row(L('Abitanti', 'Population'), fmtNum(stats.pop)) + row(L('Famiglie', 'Households'), fmtNum(stats.hh)) + row(L('Lavoratori', 'Workforce'), fmtNum(stats.workforce)) + row(L('Posti di lavoro', 'Jobs'), fmtNum(stats.jobs)) + row(L('Pendolari da fuori', 'Commuters from outside'), fmtNum(stats.commuters || 0)) + row(L('Disoccupazione', 'Unemployment'), Math.round(stats.unemp * 100) + '%') + `<div style="font-size:12px;color:var(--mute);margin:2px 0 6px">${stats.unemp < 0.07 ? L('Sotto il 10%: servono più abitanti, aggiungi case.', 'Below 10%: you need more people, add housing.') : stats.unemp > 0.13 ? L('Sopra il 10%: servono posti di lavoro (uffici, negozi, industria).', 'Above 10%: you need jobs (offices, shops, industry).') : L('Intorno al 10%: va bene così.', 'Around 10%: that is fine.')}</div>`;
+    h += row(L('Abitanti', 'Population'), fmtNum(stats.pop)) + row(L('Famiglie', 'Households'), fmtNum(stats.hh)) + row(L('Lavoratori', 'Workforce'), fmtNum(stats.workforce)) + row(L('Posti di lavoro', 'Jobs'), fmtNum(stats.jobs)) + row(L('Pendolari da fuori', 'Commuters from outside'), fmtNum(stats.commuters || 0)) + row(L('Disoccupati', 'Unemployed'), fmtNum(POP.unemp.size)) + row(L('Disoccupazione', 'Unemployment'), Math.round(stats.unemp * 100) + '%') + `<div style="font-size:12px;color:var(--mute);margin:2px 0 6px">${stats.unemp < 0.07 ? L('Sotto il 10%: servono più abitanti, aggiungi case.', 'Below 10%: you need more people, add housing.') : stats.unemp > 0.13 ? L('Sopra il 10%: servono posti di lavoro (uffici, negozi, industria).', 'Above 10%: you need jobs (offices, shops, industry).') : L('Intorno al 10%: va bene così.', 'Around 10%: that is fine.')}</div>`;
     h += row(L('Turisti al mese', 'Tourists per month'), fmtNum(stats.tourists)) + row(L('Attrattività', 'Attractiveness'), Math.round(stats.attr)) + row(L('Passeggeri mezzi pubblici', 'Transit riders'), fmtNum(stats.riders)) + row(L('Uso dei mezzi pubblici', 'Transit share'), Math.round(stats.transitShare * 100) + '%') + row(L('Traffico (ingorghi)', 'Congestion'), Math.round(stats.congestion * 100) + '%') + row(L('Veicoli in strada', 'Vehicles on roads'), vehicles.size) + row(L('Incidenti', 'Accidents'), stats.accidents);
+    h += popWhereHTML(row);
     h += `<div class="sec">${L('Età', 'Age')}</div>` + [L('Bambini', 'Children'), L('Ragazzi', 'Teens'), L('Adulti', 'Adults'), L('Anziani', 'Seniors')].map((n, i) => row(n, Math.round(stats.ages[i] * 100) + '%')).join('') + row(L('Nascite / morti al mese', 'Births / deaths per month'), `${stats.births} / ${stats.deaths}`);
     const te = stats.edu.reduce((a, b) => a + b, 0) || 1;
     h += `<div class="sec">${L('Istruzione', 'Education')}</div>` + [L('Nessuna', 'None'), L('Elementari', 'Elementary'), L('Superiori', 'High school'), L('Università', 'University')].map((n, i) => row(n, Math.round(stats.edu[i] / te * 100) + '%')).join('');
     h += `<div class="sec">${L('Servizi', 'Utilities')}</div>` + row('⚡ ' + L('Elettricità', 'Electricity'), `${Math.round(NET.cityPow.use)} / ${Math.round(NET.cityPow.prod)} MW`) + bar(NET.cityPow.use / Math.max(1, NET.cityPow.prod), NET.cityPow.use > NET.cityPow.prod ? 'var(--bad)' : 'var(--good)') + row('💧 ' + L('Acqua', 'Water'), `${fmtNum(NET.cityWat.use)} / ${fmtNum(NET.cityWat.prod)} m³`) + bar(NET.cityWat.use / Math.max(1, NET.cityWat.prod), NET.cityWat.use > NET.cityWat.prod ? 'var(--bad)' : 'var(--good)') + row('🚽 ' + L('Fogne', 'Sewage'), `${fmtNum(NET.citySew.use)} / ${fmtNum(NET.citySew.prod)} m³`) + bar(NET.citySew.use / Math.max(1, NET.citySew.prod), NET.citySew.use > NET.citySew.prod ? 'var(--bad)' : 'var(--good)');
     h += row(L('Merci prodotte / richieste', 'Goods produced / needed'), `${fmtNum(stats.goodsP)} / ${fmtNum(stats.goodsC)}`) + row(L('Malati', 'Sick'), stats.sick) + row(L('Morti da portare via', 'Uncollected dead'), stats.dead);
     h += `<div class="sec">${L('Felicità: cosa pesa di più', 'Happiness: what matters most')}</div>` + facList(stats.fac || {});
-    if (S.districts.length) { h += `<div class="sec">${L('Quartieri', 'Districts')}</div>`; for (const d of S.districts) { let p = 0; for (const b of buildings.values()) if (b.hh && distGrid[gIdx(b.x, b.z)] === d.id) p += b.occ * 2.6; h += row(d.name, fmtNum(p) + ' ' + L('ab.', 'pop.')); } }
+    if (S.districts.length) { h += `<div class="sec">${L('Quartieri', 'Districts')}</div>`; for (const d of S.districts) { let p = 0; for (const b of buildings.values()) if (b.hh && distGrid[gIdx(b.x, b.z)] === d.id) p += (b.res || 0); h += row(d.name, fmtNum(p) + ' ' + L('ab.', 'pop.')); } }
     h += `<div class="sec">${L('Storico', 'History')}</div>` + chart();
   } else if (sideOpen === 'budget') {
     const bg = budgetNow(); h += head('💶 ' + L('Bilancio mensile', 'Monthly budget'));
@@ -4299,7 +4285,7 @@ function lnSet(id, k, v) { const l = lnGet(id); if (l) l[k] = v; }
 function findLine(id) { const l = lnGet(id); if (!l || !l.stops.length) return; l.hide = false; showInfo('transit'); const xs = l.stops.map(s => s.x), zs = l.stops.map(s => s.z); cam.tx = (Math.min(...xs) + Math.max(...xs)) / 2; cam.tz = (Math.min(...zs) + Math.max(...zs)) / 2; cam.dist = clamp(Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.3, 300, 4000); redrawLines(); }
 function maxVeh(ln) { return 20 + (ln.kind === 'bus' ? 5 * [...svcs.values()].filter(s => s.type === 'busdepot' && s.ext.includes('bay')).length : 0); }
 function lineUse(ln) { return ln.off || !ln.nveh ? 0 : Math.round(ln.riders / (lineCap(ln) * ln.nveh * 0.6) * 100); }
-function profitOf(b) { const k = ZT[b.zone].k, fill = b.jobs ? b.occ / b.jobs : 0, t = taxEff(k === 'M' ? 'C' : k); return clamp(fill * 0.8 + (k === 'C' || k === 'M' ? Math.min(1, (stats.demand?.C ?? 0) / 60 + 0.4) : k === 'I' ? (stats.goodsP <= stats.goodsC ? 0.5 : 0.25) : 0.4) * 0.5 - (t - 10) / 40 + (b.level - 1) * 0.04, 0, 1); }
+function profitOf(b) { const k = ZT[b.zone].k, fill = b.jobs ? (b.wk || 0) / b.jobs : 0, t = taxEff(k === 'M' ? 'C' : k); return clamp(fill * 0.8 + (k === 'C' || k === 'M' ? Math.min(1, (stats.demand?.C ?? 0) / 60 + 0.4) : k === 'I' ? (stats.goodsP <= stats.goodsC ? 0.5 : 0.25) : 0.4) * 0.5 - (t - 10) / 40 + (b.level - 1) * 0.04, 0, 1); }
 function fireRisk(b) { return clamp((1 - (b.cov?.fire || 0)) * (ZT[b.zone].k === 'I' ? 1 : 0.6) * (UPG.has('fir1') ? 0.5 : 1), 0, 1); }
 function takeLoan(a, r, m) { S.loans.push({ amt: a, pay: Math.round(a * (1 + r) / m), left: m }); if (!S.opts.unlimited) S.money += a; refreshPanels(); toast(L('Prestito ottenuto', 'Loan taken'), 1500); }
 function buyUpg(id) { const u = UPGRADES.find(x => x.id === id); if (S.dev < u.cost) return; S.dev -= u.cost; UPG.add(id); S.upg = [...UPG]; refreshPanels(); toast('⭐ ' + u.n(), 2500); }
@@ -5497,18 +5483,16 @@ updateBuilding = function (b) {
   b.rent = rent; b.rentR = ratio;
   const pen = ratio > 1 ? -Math.min(20, (ratio - 1) * 25) : 0;
   if (b.fac) b.fac.rent = pen; b.happy = clamp(b.happy + pen * 0.3, 0, 100);
-  if (ratio > 1.3 && rand() < 0.12) { b.occ--; S.homeless = (S.homeless || 0) + 2.6; }
+  if (ratio > 1.3 && rand() < 0.12) popEvictOne(b); // la famiglia non paga l'affitto: diventa senzatetto
   if (ratio < 0.8 && b.lvlT > 0) b.lvlT += 0.4; // l'affitto copre bene la manutenzione: sale prima di livello
 };
 const _ruinBuilding4 = ruinBuilding;
-ruinBuilding = function (b) { if (b.hh && b.occ) S.homeless = (S.homeless || 0) + b.occ * 2.6 * 0.5; _ruinBuilding4(b); };
+ruinBuilding = function (b) { _ruinBuilding4(b); }; // i senzatetto veri li crea popEvict
 // senzatetto: ogni mese una parte trova casa (se ci sono case libere e assistenza), gli altri vivono nei parchi
 const _monthly4 = monthly;
 monthly = function () {
   _monthly4();
-  let h = S.homeless || 0; if (!h) return;
-  const free = Math.max(0, stats.hhCap - stats.hh) * 2.6, welfare = [...svcs.values()].some(s => s.on && SV[s.type].eff === 'welfare');
-  h -= Math.min(h, free * 0.3 + (welfare ? h * 0.25 : h * 0.05)); S.homeless = Math.max(0, Math.round(h));
+  S.homeless = POP.hl; // persone vere senza casa (trovano casa in popRehome)
   drawTents();
 };
 const tentGroup = new THREE.Group(); scene.add(tentGroup);
@@ -5624,9 +5608,9 @@ function citizensMonth() {
   // condizioni dei cittadini
   const hc = (() => { let s = 0, n = 0; for (const b of buildings.values()) if (b.hh && b.cov) { s += Math.min(1, b.cov.health || 0); n++; } return n ? s / n : 0; })();
   let unhappy = 0, trapped = 0, danger = 0;
-  for (const b of buildings.values()) { if (!b.hh || !b.occ) continue; if (b.happy < 30) unhappy += b.occ * 2.6; if (b.fire) trapped += b.occ * 0.3; }
-  for (const f of forestFires) bldNear(f.x, f.z, f.r + 300, b => { if (b.hh) danger += b.occ * 2.6; });
-  if (typeof tornados !== 'undefined') for (const t of tornados) bldNear(t.x, t.z, 600, b => { if (b.hh) danger += b.occ * 2.6; });
+  for (const b of buildings.values()) { if (!b.hh || !b.occ) continue; if (b.happy < 30) unhappy += (b.res || 0); if (b.fire) trapped += b.occ * 0.3; }
+  for (const f of forestFires) bldNear(f.x, f.z, f.r + 300, b => { if (b.hh) danger += (b.res || 0); });
+  if (typeof tornados !== 'undefined') for (const t of tornados) bldNear(t.x, t.z, 600, b => { if (b.hh) danger += (b.res || 0); });
   stats.cond = { sick: stats.sick || 0, injured: Math.round(stats.injured || 0), weak: Math.round(pop * a[3] * 0.25 * (1 - hc)), unhappy: Math.round(unhappy), danger: Math.round(danger), trapped: Math.round(trapped), evac: Math.round(stats.evacM || 0) };
   stats.injured = (stats.injured || 0) * 0.5; stats.evacM = 0;
   // gite fuori città e studenti
@@ -5739,7 +5723,7 @@ function citizensHTML() {
 }
 // gli evacuati contano nelle condizioni
 const _evacuate5 = evacuate;
-evacuate = function (x, z) { _evacuate5(x, z); let n = 0; bldNear(x, z, 2000, b => { if (b.hh) n += b.occ * 2.6; }); if ([...svcs.values()].some(s => s.on && SV[s.type].shel)) stats.evacM = (stats.evacM || 0) + Math.round(n * 0.5); };
+evacuate = function (x, z) { _evacuate5(x, z); let n = 0; bldNear(x, z, 2000, b => { if (b.hh) n += (b.res || 0); }); if ([...svcs.values()].some(s => s.on && SV[s.type].shel)) stats.evacM = (stats.evacM || 0) + Math.round(n * 0.5); };
 
 // =====================================================================
 //  Novità dal wiki - Blocco 6: economia
@@ -5792,7 +5776,7 @@ const OFFICE_P = [['software', '💻', ['Software', 'Software']], ['telecom', '�
 const COM_P = [['lodging', '🛏️', ['Alloggio', 'Lodging']], ['meals', '🍽️', ['Pasti', 'Meals']], ['entertain', '🎭', ['Intrattenimento', 'Entertainment']], ['leisure', '🎳', ['Svago', 'Recreation']]];
 function computeChain() {
   const R = stats.raw || {}, base = { wood: R.wood?.p || 0, ore: R.ore?.p || 0, stone: R.stone?.p || 0, oil: R.oil?.p || 0, cotton: R.cotton?.p || 0, grain: (R.food?.p || 0) * 0.4, veg: (R.food?.p || 0) * 0.3, livestock: (R.food?.p || 0) * 0.3, coal: (R.ore?.p || 0) * 0.3 };
-  let fac = 0, off = 0, com = 0; for (const b of buildings.values()) { if (b.ruin || b.aband) continue; const k = ZT[b.zone].k; if (k === 'I' && !b.spec) fac += b.occ; else if (k === 'O') off += b.occ; else if (k === 'C' || k === 'M') com += b.occ; }
+  let fac = 0, off = 0, com = 0; for (const b of buildings.values()) { if (b.ruin || b.aband) continue; const k = ZT[b.zone].k; if (k === 'I' && !b.spec) fac += b.occ; else if (k === 'O') off += b.occ; else if (k === 'C' || k === 'M') com += b.wk || 0; }
   const P = { ...base }, out = {};
   const cap = fac * 0.6 * feeBiz() * specMul();
   for (const [k, ins] of CHAIN) { const have = Math.min(...ins.map(i => P[i] || 0)), need = cap / CHAIN.length; const made = Math.round(Math.min(have, need) * 0.9 + (have < need ? 0 : 0)); P[k] = made; out[k] = { p: made, n: Math.round(need), imp: Math.max(0, Math.round(need - made)) }; }
@@ -5822,7 +5806,7 @@ function resourcesMonth() {
   }
 }
 const _updateBuilding6b = updateBuilding;
-updateBuilding = function (b) { _updateBuilding6b(b); if (b.depleted && buildings.has(b.id) && !b.ruin) { b.occ = Math.max(0, b.occ - 1); } };
+updateBuilding = function (b) { _updateBuilding6b(b); if (b.depleted && buildings.has(b.id) && !b.ruin) popFireOne(b); };
 // ---------- ogni mese ----------
 const _monthly6 = monthly;
 monthly = function () { _monthly6(); computeChain(); resourcesMonth(); };
@@ -6178,7 +6162,7 @@ function parkMonth() {
   const totAttr = Math.max(1, stats.attr || 1);
   for (const sv of svcs.values()) {
     const d = SV[sv.type]; if (!sv.on || !d.parea) continue; const p = parkData(sv), mods = parkMods(sv).length;
-    let near = 0; bldNear(sv.x, sv.z, d.r * 1.5, b => { if (b.hh) near += b.occ * 2.6; });
+    let near = 0; bldNear(sv.x, sv.z, d.r * 1.5, b => { if (b.hh) near += (b.res || 0); });
     const at = (d.attr + parkMods(sv).reduce((a, k) => a + PMOD[k].attr, 0)) * parkMul(sv);
     p.v = Math.round((near * 0.06 + (stats.tourists || 0) * at / totAttr * 0.5) * (1 - p.t / 30) * (0.6 + mods * 0.1) * (0.5 + parkRating(sv) / 200));
     const old = parkLevel(p); p.xp += p.v; const nl = parkLevel(p);
@@ -6988,6 +6972,512 @@ loadBar = function (f, txt) {
   bootShow(txt + ' ' + Math.round(f * 100) + '%', f);
 };
 
+// =====================================================================
+//  Popolazione vera (23 nov 2026): nessuna persona inventata.
+//  Ogni abitante esiste davvero: ha una famiglia, una casa (che ha un massimo di persone),
+//  al massimo UN posto di lavoro (che ha un massimo di impiegati) e sta in un solo posto alla volta.
+//  Si entra in città solo arrivando da fuori (strada, treno, nave) o nascendo;
+//  si esce partendo o morendo. Le auto e i pedoni che si vedono sono persone vere che fanno un viaggio vero.
+//
+//  Contatori da leggere (anche per altri pannelli):
+//   stats.pop        abitanti veri (con casa + senzatetto)
+//   stats.where      { casa, lavoro, negozi, viaggio, fuori } : dove sono adesso gli abitanti e i pendolari
+//   stats.commuters  pendolari veri che vivono fuori e lavorano qui
+//   stats.arriving   persone in arrivo (famiglie in viaggio verso la casa nuova)
+//   stats.tourists   turisti entrati nelle ultime 24 ore (= un mese di gioco); stats.tourHere = turisti in città adesso
+//   S.flow           totali dall'inizio: in {strada, treno, nave, nati}, out {partiti, morti}
+//   stats.flowM      gli stessi numeri ma solo del mese in corso; stats.flowLast = mese scorso
+//   b.res / b.cap    abitanti / massimo abitanti di una casa;  b.occ = famiglie, b.hh = massimo famiglie
+//   b.wk / b.jobs    impiegati / massimo impiegati;  b.cust / b.cmax = clienti adesso / massimo clienti
+// =====================================================================
+const ST = { CASA: 0, VIAGGIO: 1, LAVORO: 2, NEGOZIO: 3, FUORI: 4 };
+const OUTH = -2, NOHOME = -1; // casa = fuori città (pendolari) / nessuna casa (senzatetto)
+const POP = { p: new Map(), f: new Map(), nP: 1, nF: 1, unemp: new Set(), arr: [], trips: [], walk: [], tour: new Map(), nT: 1, tourLog: [], where: [0, 0, 0, 0, 0], comm: 0, hl: 0, adults: 0, ages: [0, 0, 0, 0], carOf: new Map(), outs: [], rail: false, ship: false };
+function popReset() {
+  POP.p.clear(); POP.f.clear(); POP.nP = 1; POP.nF = 1; POP.unemp.clear(); POP.arr = []; POP.trips = []; POP.walk = []; POP.tour.clear(); POP.nT = 1; POP.tourLog = [];
+  POP.where = [0, 0, 0, 0, 0]; POP.comm = 0; POP.hl = 0; POP.adults = 0; POP.ages = [0, 0, 0, 0]; POP.carOf.clear();
+}
+const flowZero = () => ({ in: { strada: 0, treno: 0, nave: 0, nati: 0 }, out: { partiti: 0, morti: 0 } });
+function flowAdd(dir, k, n) { if (!S) return; S.flow = S.flow || flowZero(); S.flow[dir][k] += n; stats.flowM = stats.flowM || flowZero(); stats.flowM[dir][k] += n; }
+const workAge = p => p.a >= 18 && p.a < 65;
+
+// ---------- capienza di ogni edificio ----------
+const _bldCapacityP = bldCapacity;
+bldCapacity = function (b) {
+  _bldCapacityP(b);
+  const k = ZT[b.zone].k;
+  b.cap = b.hh * 5; // al massimo 5 persone per appartamento
+  b.cmax = k === 'C' || k === 'M' ? Math.max(6, b.jobs * 3) : 0; // clienti dentro nello stesso momento
+  if (b.res == null) { b.res = 0; b.wk = 0; b.cust = 0; b.resv = 0; }
+  if (!b.fams) b.fams = new Set(); if (!b.wl) b.wl = new Set();
+};
+const jobSite = j => j > 0 ? buildings.get(j) : j < 0 ? svcs.get(-j) : null;
+function siteMax(o) {
+  if (!o) return 0;
+  if (o.zone != null) return o.aband || o.ruin || o.cons > 0 ? 0 : o.jobs || 0;
+  const d = SV[o.type]; return o.on && d && d.spec ? d.jobs || 0 : 0;
+}
+function siteKind(j) { const o = jobSite(j); if (!o) return ''; return o.zone != null ? ZT[o.zone].k : 'S'; }
+
+// ---------- persone e famiglie ----------
+function stSet(p, s, at) {
+  POP.where[p.s]--;
+  if (p.s === ST.NEGOZIO) { const b = buildings.get(p.at); if (b) b.cust = Math.max(0, (b.cust || 0) - 1); }
+  p.s = s; p.at = at || 0; POP.where[s]++;
+  if (s === ST.NEGOZIO) { const b = buildings.get(p.at); if (b) b.cust = (b.cust || 0) + 1; }
+}
+function popNew(f, h, a) {
+  const p = { id: POP.nP++, f: f ? f.id : 0, h, a, j: 0, s: h === OUTH ? ST.FUORI : ST.CASA, at: h > 0 ? h : 0, t: 0, sh: 7, to: 0, ts: 0, m: '' };
+  POP.p.set(p.id, p); POP.where[p.s]++;
+  if (f) f.m.push(p.id);
+  if (h !== OUTH && workAge(p)) POP.unemp.add(p.id);
+  return p;
+}
+function popHire(p, o, jid) {
+  p.j = jid; o.wl = o.wl || new Set(); o.wl.add(p.id); o.wk = o.wl.size; if (o.zone != null && !o.hh) o.occ = o.wk;
+  POP.unemp.delete(p.id);
+  const k = o.zone != null ? ZT[o.zone].k : 'I';
+  p.sh = k === 'I' && rand() < 0.3 ? 22 : k === 'C' || k === 'M' ? 8 + Math.floor(rand() * 5) : 6 + Math.floor(rand() * 4);
+}
+function popFire(p) {
+  if (!p.j) return; const o = jobSite(p.j);
+  if (o && o.wl) { o.wl.delete(p.id); o.wk = o.wl.size; if (o.zone != null && !o.hh) o.occ = o.wk; }
+  p.j = 0;
+  if (p.s === ST.LAVORO) homeNow(p);
+  if (p.h === OUTH) { popDel(p); return; } // i pendolari esistono qui solo finché lavorano qui
+  if (workAge(p)) POP.unemp.add(p.id);
+}
+function popDel(p) {
+  if (!POP.p.has(p.id)) return;
+  if (p.j) { const o = jobSite(p.j); if (o && o.wl) { o.wl.delete(p.id); o.wk = o.wl.size; if (o.zone != null && !o.hh) o.occ = o.wk; } p.j = 0; }
+  POP.unemp.delete(p.id);
+  stSet(p, ST.CASA, 0); POP.where[ST.CASA]--;
+  POP.p.delete(p.id);
+  if (p.h === OUTH) POP.comm--;
+  const f = POP.f.get(p.f);
+  if (f) { f.m = f.m.filter(x => x !== p.id); const b = f.h > 0 ? buildings.get(f.h) : null; if (b) b.res = Math.max(0, b.res - 1); if (!f.m.length) famDrop(f); }
+}
+function famDrop(f) { const b = f.h > 0 ? buildings.get(f.h) : null; if (b) { b.fams.delete(f.id); b.occ = b.fams.size; } POP.f.delete(f.id); }
+function homeNow(p) { if (p.h > 0) stSet(p, ST.CASA, p.h); else if (p.h === OUTH) stSet(p, ST.FUORI, 0); else stSet(p, ST.CASA, 0); }
+function famIn(f, b) {
+  f.h = b.id; b.fams.add(f.id); b.occ = b.fams.size;
+  for (const id of f.m) { const p = POP.p.get(id); if (!p) continue; p.h = b.id; b.res++; if (p.s === ST.CASA) p.at = b.id; }
+}
+function famOut(f) {
+  const b = f.h > 0 ? buildings.get(f.h) : null;
+  if (b) { b.fams.delete(f.id); b.occ = b.fams.size; b.res = Math.max(0, b.res - f.m.length); f.lx = b.x; f.lz = b.z; }
+  f.h = NOHOME;
+  for (const id of f.m) { const p = POP.p.get(id); if (!p) continue; p.h = NOHOME; if (p.s === ST.CASA) p.at = 0; }
+}
+// una famiglia lascia la città: si vede la sua auto che va verso l'uscita
+function famLeave(f) {
+  const b = f.h > 0 ? buildings.get(f.h) : null, n = f.m.length;
+  if (b && POP.outs.length) POP.trips.push({ k: 'out', A: b, G: pick(POP.outs), t: S.time });
+  for (const id of [...f.m]) { const p = POP.p.get(id); if (p) popDel(p); }
+  if (POP.f.has(f.id)) POP.f.delete(f.id);
+  flowAdd('out', 'partiti', n);
+  if (typeof st10LeftReal === 'function') st10LeftReal(n);
+}
+const homeFree = b => b && b.hh && !b.aband && !b.ruin && !(b.cons > 0) && b.occ + (b.resv || 0) < b.hh;
+function freeHome(x, z, not) {
+  let best = null, bd = 1e18;
+  for (const b of buildings.values()) { if (b === not || !homeFree(b)) continue; const d = (b.x - x) ** 2 + (b.z - z) ** 2; if (d < bd) { bd = d; best = b; } }
+  return best;
+}
+// edificio che si svuota (demolito, abbandonato, distrutto): chi ci vive e chi ci lavora deve andare via
+function popEvict(b, mode) {
+  if (!b) return;
+  if (b.fams) for (const fid of [...b.fams]) {
+    const f = POP.f.get(fid); if (!f) { b.fams.delete(fid); continue; }
+    if (mode === 'ruin' && rand() < 0.5) { famOut(f); continue; } // metà diventa senzatetto
+    const nb = mode === 'move' ? freeHome(b.x, b.z, b) : null;
+    if (nb) { famOut(f); famIn(f, nb); } else famLeave(f);
+  }
+  if (b.wl) for (const id of [...b.wl]) { const p = POP.p.get(id); if (p) popFire(p); else b.wl.delete(id); }
+  if (b.cust) for (const p of POP.p.values()) if (p.s === ST.NEGOZIO && p.at === b.id) homeNow(p);
+  for (const g of POP.tour.values()) if (g.at === b.id && g.s === 1) { g.t2 = S.time; }
+  b.occ = 0; b.res = 0; b.wk = 0; b.cust = 0;
+}
+// una famiglia sola (affitto troppo alto): diventa senzatetto
+function popEvictOne(b) { if (!b.fams || !b.fams.size) return; const f = POP.f.get([...b.fams][0]); if (f) famOut(f); }
+function popFireOne(b) { if (!b.wl || !b.wl.size) return; const p = POP.p.get([...b.wl][0]); if (p) popFire(p); }
+// morte vera: la persona sparisce e il corpo resta in casa finché arriva il carro funebre
+function popDie(p) { const b = p.h > 0 ? buildings.get(p.h) : null; if (b) b.dead++; popDel(p); flowAdd('out', 'morti', 1); if (typeof st10LeftReal === 'function') st10LeftReal(1); }
+function popKillIn(b) { if (!b || !b.fams || !b.fams.size) return false; const f = POP.f.get([...b.fams][Math.floor(rand() * b.fams.size)]); if (!f || !f.m.length) return false; const p = POP.p.get(pick(f.m)); if (!p) return false; popDie(p); return true; }
+
+// ---------- arrivi in città ----------
+function famComp() {
+  const r = rand(), ad = () => 20 + rand() * 25, kid = () => rand() * 16;
+  if (r < 0.2) return [ad()];
+  if (r < 0.45) return [ad(), ad()];
+  if (r < 0.9) { const x = [ad(), ad(), kid()]; if (rand() < 0.5) x.push(kid()); if (rand() < 0.25) x.push(kid()); return x; }
+  return [62 + rand() * 15, 62 + rand() * 15];
+}
+function arrOrigin() {
+  const o = [];
+  if (POP.outs.length) o.push(['strada', 1]);
+  if (POP.rail) o.push(['treno', 0.35]);
+  if (POP.ship) o.push(['nave', 0.2]);
+  if (!o.length) return 'strada';
+  let t = o.reduce((a, x) => a + x[1], 0) * rand(); for (const [k, w] of o) { t -= w; if (t <= 0) return k; } return o[0][0];
+}
+function popArrive(b) {
+  b.resv = (b.resv || 0) + 1;
+  const a = { b: b.id, ages: famComp(), or: arrOrigin(), t: S.time + 0.5 + rand() * 1.5, car: false, done: false };
+  POP.arr.push(a);
+  if (a.or === 'strada' && POP.outs.length) POP.trips.push({ k: 'in', arr: a, G: pick(POP.outs), B: b, t: S.time });
+}
+function popSettle(a) {
+  if (a.done) return; a.done = true;
+  let b = buildings.get(a.b); if (b) b.resv = Math.max(0, (b.resv || 0) - 1);
+  if (!homeFree(b)) b = b ? freeHome(b.x, b.z) : null;
+  if (!b) return; // la casa non c'è più e non ce ne sono altre: non entrano
+  const f = { id: POP.nF++, h: NOHOME, m: [] }; POP.f.set(f.id, f);
+  const room = Math.max(1, Math.min(a.ages.length, b.cap - b.res));
+  for (let i = 0; i < room; i++) popNew(f, NOHOME, a.ages[i]);
+  famIn(f, b);
+  flowAdd('in', a.or, room);
+  if (typeof st10Real === 'function') st10Real(b, room, a.or);
+}
+
+// ---------- ogni edificio: chi arriva, chi se ne va, chi viene assunto ----------
+function popBuilding(b) {
+  if (b.hh) {
+    const free = b.hh - b.occ - (b.resv || 0);
+    if (free > 0 && stats.demand.R > 10 && b.happy > 30 && rand() < 0.6) { const n = Math.max(1, Math.round(free * 0.25 * rand())); for (let i = 0; i < n; i++) popArrive(b); }
+    if (b.happy < 25 && b.occ > 0 && rand() < 0.3) { const f = POP.f.get([...b.fams][0]); if (f) famLeave(f); }
+  }
+  if (b.jobs) jobFill(b, b.id);
+}
+function commCap() { return POP.outs.length ? Math.round(Math.min(stats.jobs * 0.35, 150 + stats.pop * 0.15)) : 0; }
+function pickWorker(o) {
+  let best = null, bd = 1e18, n = 0;
+  for (const id of POP.unemp) {
+    const p = POP.p.get(id); if (!p || p.j || !workAge(p)) { POP.unemp.delete(id); continue; }
+    const h = p.h > 0 ? buildings.get(p.h) : null, d = h ? (h.x - o.x) ** 2 + (h.z - o.z) ** 2 : 25e6;
+    if (d < bd) { bd = d; best = p; } if (++n >= 16) break;
+  }
+  return best;
+}
+function jobFill(o, jid) {
+  if (!o.wl) o.wl = new Set();
+  const max = siteMax(o);
+  while (o.wl.size > max) { const p = POP.p.get([...o.wl][o.wl.size - 1]); if (p) popFire(p); else o.wl.delete([...o.wl][o.wl.size - 1]); }
+  o.wk = o.wl.size; if (o.zone != null && !o.hh) o.occ = o.wk;
+  let need = Math.min(max - o.wk, Math.max(1, Math.ceil(max * 0.2)));
+  while (need > 0) { const p = pickWorker(o); if (!p) break; popHire(p, o, jid); need--; }
+  const cap = commCap();
+  while (need > 0 && POP.comm < cap) { const p = popNew(null, OUTH, 22 + rand() * 40); POP.comm++; popHire(p, o, jid); need--; }
+}
+
+// ---------- giornata: casa -> lavoro -> negozi -> casa ----------
+const sitePos = j => jobSite(j);
+function popPlace(p) { // da dove parte adesso
+  if (p.s === ST.LAVORO) return jobSite(p.j);
+  if (p.s === ST.NEGOZIO) return buildings.get(p.at);
+  if (p.h > 0) return buildings.get(p.h);
+  return null;
+}
+function goTo(p, to, st, force) {
+  const A = popPlace(p), B = st === ST.LAVORO ? jobSite(to) : st === ST.CASA && p.h > 0 ? buildings.get(p.h) : buildings.get(to);
+  const fromOut = !A && p.h === OUTH, toOut = st === ST.FUORI;
+  if ((!A && !fromOut) || (!B && !toOut)) { homeNow(p); return; }
+  const ax = A ? A.x : B.x, az = A ? A.z : B.z, bx = B ? B.x : ax, bz = B ? B.z : az;
+  const d = fromOut || toOut ? 6000 : Math.hypot(ax - bx, az - bz);
+  const hb = p.h > 0 ? buildings.get(p.h) : null;
+  p.m = force ? 'c' : d < 800 ? 'w' : hb && hb.cov?.transit > 0.3 && rand() < (stats.transitShare || 0) * 1.6 ? 'b' : 'c';
+  stSet(p, ST.VIAGGIO, 0); p.to = to; p.ts = st; p.t = S.time + (p.m === "w" ? clamp(d / 1500, 0.4, 2) : clamp(d / 12000, 0.2, 2)); p.car = false; p.ws = A || B; p.wa = A;
+  if (p.m === 'w') POP.walk.push(p.id);
+  else if (p.m === 'c') POP.trips.push({ k: 'p', pid: p.id, A: A, G: fromOut || toOut ? pick(POP.outs) : null, B: B, t: S.time });
+}
+function goHome(p) { if (p.h > 0) goTo(p, p.h, ST.CASA); else if (p.h === OUTH) { if (POP.outs.length) goTo(p, 0, ST.FUORI); else homeNow(p); } else homeNow(p); }
+function popReach(p) {
+  p.car = false;
+  if (p.ts === ST.LAVORO) { if (p.j && p.j === p.to && jobSite(p.j)) stSet(p, ST.LAVORO, p.j); else goHome(p); return; }
+  if (p.ts === ST.NEGOZIO) { const b = buildings.get(p.to); if (b && !b.aband && !b.ruin && (b.cust || 0) < b.cmax) { stSet(p, ST.NEGOZIO, b.id); p.t2 = S.time + 1 + rand() * 2; } else homeNow(p); return; }
+  homeNow(p);
+}
+function pickShop(p) {
+  const h = buildings.get(p.h); if (!h || !lists.com.length) return null;
+  let best = null, bd = 1e18;
+  for (let i = 0; i < 6; i++) { const b = pick(lists.com); if (!b || (b.cust || 0) >= b.cmax) continue; const d = (b.x - h.x) ** 2 + (b.z - h.z) ** 2; if (d < bd) { bd = d; best = b; } }
+  return best;
+}
+function popHour() {
+  const hr = Math.floor(S.time % 24);
+  POP.outs = outsideNodes();
+  POP.rail = typeof outsideRail === 'function' && outsideRail().length > 0 && [...svcs.values()].some(s => s.on && s.type === 'train');
+  POP.ship = [...svcs.values()].some(s => s.on && s.type === 'harbor');
+  // famiglie in arrivo
+  for (const a of POP.arr) if (!a.done && S.time >= a.t + (a.car ? 6 : 0)) popSettle(a);
+  POP.arr = POP.arr.filter(a => !a.done);
+  // pendolari: se in città ci sono disoccupati prendono il loro posto, e non più del limite
+  const cap = commCap(); let over = POP.comm - cap, rep = Math.min(POP.comm, POP.unemp.size) * 0.3;
+  if (over > 0 || rep >= 1) for (const p of POP.p.values()) { if (p.h !== OUTH) continue; if (over > 0) { over--; popFire(p); } else if (rep >= 1) { rep--; popFire(p); } else break; }
+  // ognuno fa la sua giornata
+  const ages = [0, 0, 0, 0]; let adults = 0, hl = 0;
+  for (const p of POP.p.values()) {
+    if (p.h !== OUTH) { ages[p.a < 13 ? 0 : p.a < 18 ? 1 : p.a < 65 ? 2 : 3]++; if (workAge(p)) adults++; if (p.h === NOHOME) hl++; }
+    if (p.s === ST.VIAGGIO) { if (S.time >= p.t + (p.car ? 4 : 0)) popReach(p); continue; }
+    if (p.j) {
+      if (p.s !== ST.LAVORO && hr === p.sh) { goTo(p, p.j, ST.LAVORO); continue; }
+      if (p.s === ST.LAVORO && hr === (p.sh + 8) % 24) { goHome(p); continue; }
+    }
+    if (p.s === ST.NEGOZIO) { if (S.time >= p.t2) goHome(p); continue; }
+    if (p.s === ST.CASA && p.h > 0 && hr >= 8 && hr <= 21 && rand() < (p.j ? 0.02 : p.a < 13 ? 0.015 : 0.05)) { const b = pickShop(p); if (b) goTo(p, b.id, ST.NEGOZIO); }
+  }
+  POP.ages = ages; POP.adults = adults; POP.hl = hl; S.homeless = hl;
+  POP.trips = POP.trips.filter(t => S.time - t.t < 1.5).slice(-4000); // i viaggi non disegnati si fanno lo stesso: solo non si vedono
+  POP.walk = POP.walk.filter(id => { const p = POP.p.get(id); return p && p.s === ST.VIAGGIO && p.m === 'w'; });
+  tourHour();
+}
+// ---------- ogni mese: compleanni, nascite, morti ----------
+function popMonth() {
+  stats.flowLast = stats.flowM || flowZero(); stats.flowM = flowZero();
+  let births = 0, deaths = 0;
+  const hp = (stats.happy || 60) / 60;
+  for (const p of [...POP.p.values()]) {
+    if (p.h === OUTH) continue;
+    const was = p.a; p.a += 1 / 12;
+    if (was < 18 && p.a >= 18 && !p.j) POP.unemp.add(p.id);
+    if (was < 65 && p.a >= 65) { if (p.j) popFire(p); POP.unemp.delete(p.id); }
+    const b = p.h > 0 ? buildings.get(p.h) : null;
+    const risk = (p.a < 60 ? 0.0003 : clamp((p.a - 60) * 0.004, 0, 0.3)) * (b && b.sick > 0 ? 1.5 : 1) * (p.h === NOHOME ? 2 : 1);
+    if (rand() < risk) { popDie(p); deaths++; }
+  }
+  for (const f of POP.f.values()) {
+    if (f.h <= 0 || f.m.length >= 5) continue; const b = buildings.get(f.h); if (!b || b.res >= b.cap) continue;
+    let par = 0; for (const id of f.m) { const p = POP.p.get(id); if (p && p.a >= 20 && p.a < 43) par++; }
+    if (par && rand() < 0.03 * par * hp) { popNew(f, b.id, 0); b.res++; births++; flowAdd('in', 'nati', 1); if (typeof st10Real === 'function') st10Real(b, 1, 'nati'); }
+  }
+  stats.births = births; stats.deaths = deaths;
+  popRehome();
+}
+// senzatetto: una parte trova casa (di più con l'assistenza sociale), qualcuno lascia la città
+function popRehome() {
+  const welfare = [...svcs.values()].some(s => s.on && SV[s.type].eff === 'welfare');
+  let n = 0;
+  for (const f of [...POP.f.values()]) {
+    if (f.h !== NOHOME) continue; if (++n > 300) break;
+    if (rand() < (welfare ? 0.5 : 0.2)) { const nb = freeHome(f.lx ?? cam.tx, f.lz ?? cam.tz); if (nb) { famIn(f, nb); continue; } }
+    if (rand() < 0.1) famLeave(f);
+  }
+}
+// ---------- turisti: gruppi veri che entrano, restano qualche ora nei negozi e ripartono ----------
+function tourHour() {
+  const target = stats.tourTarget || 0; // turisti al mese che la città attira (stesse regole di prima)
+  POP.tourLog = POP.tourLog.filter(x => S.time - x[0] < 24);
+  const lastDay = POP.tourLog.reduce((a, x) => a + x[1], 0);
+  let want = Math.max(0, Math.round(target / 24 + (target - lastDay) * 0.05));
+  const canCome = POP.outs.length || POP.rail || POP.ship || stats.cruise;
+  while (want > 0 && canCome && lists.com.length) {
+    const b = pick(lists.com); if (!b || (b.cust || 0) >= b.cmax) { want -= 3; continue; }
+    const n = Math.min(want, 1 + Math.floor(rand() * 5), b.cmax - (b.cust || 0)); want -= n;
+    const or = stats.cruise && rand() < 0.3 ? 'nave' : arrOrigin();
+    const g = { id: POP.nT++, n, at: b.id, s: 0, t: S.time + 0.5 + rand(), t2: 0, or };
+    POP.tour.set(g.id, g); POP.tourLog.push([S.time, n]);
+    if (or === 'strada' && POP.outs.length) POP.trips.push({ k: 'tin', g, G: pick(POP.outs), B: b, t: S.time });
+  }
+  let here = 0, coming = 0;
+  for (const g of [...POP.tour.values()]) {
+    const b = buildings.get(g.at);
+    if (g.s === 0) { if (S.time >= g.t) { if (b && (b.cust || 0) + g.n <= b.cmax) { g.s = 1; g.t2 = S.time + 3 + rand() * 9; b.cust = (b.cust || 0) + g.n; } else { POP.tour.delete(g.id); continue; } } else { coming += g.n; continue; } }
+    if (g.s === 1 && (S.time >= g.t2 || !b)) { if (b) b.cust = Math.max(0, (b.cust || 0) - g.n); if (b && POP.outs.length) POP.trips.push({ k: 'out', A: b, G: pick(POP.outs), t: S.time }); POP.tour.delete(g.id); continue; }
+    here += g.n;
+  }
+  stats.tourHere = here; stats.tourComing = coming;
+  stats.tourists = POP.tourLog.reduce((a, x) => a + x[1], 0);
+}
+
+// ---------- veicoli: ogni auto privata porta una persona vera nel suo viaggio vero ----------
+const legOf = o => o ? { seg: segs.get(o.seg), along: o.along } : null;
+const gateOf = g => g ? outsideLeg(g) : null;
+function spawnPersonTrip(t) {
+  let A, B, kind = 'car', mode = 'car', opts = {};
+  if (t.k === 'p') {
+    const p = POP.p.get(t.pid); if (!p || p.s !== ST.VIAGGIO || p.car) return false;
+    const old = POP.carOf.get(p.id); if (old && vehicles.has(old)) return false;
+    A = t.A ? legOf(t.A) : gateOf(t.G); B = t.B ? legOf(t.B) : gateOf(t.G);
+    mode = p.a < 19 ? 'young' : p.a >= 65 ? 'senior' : 'car'; opts.pid = p.id;
+  } else if (t.k === 'in') { if (t.arr.done) return false; A = gateOf(t.G); B = legOf(t.B); opts.mv = 1; }
+  else if (t.k === 'tin') { if (t.g.s !== 0) return false; A = gateOf(t.G); B = legOf(t.B); opts.tour = t.g.id; }
+  else { A = legOf(t.A); B = gateOf(t.G); opts.mv = 1; }
+  if (!A || !B || !A.seg || !B.seg) return false;
+  const legs = findPath(A.seg, A.along, B.seg, B.along, mode);
+  if (!legs) { if (t.k === 'p') stats.noRoute = (stats.noRoute || 0) + 1; return false; }
+  if (t.k === 'p' && t.A && t.B && legsLen(legs) > TRIP_MAX.work) { stats.tooFar = (stats.tooFar || 0) + 1; return false; }
+  const v = spawnVehicle(kind, legs, opts); if (!v) return false;
+  if (t.k === 'p') { const p = POP.p.get(t.pid); p.car = true; POP.carOf.set(p.id, v); v.onArrive = () => { if (POP.carOf.get(p.id) === v) POP.carOf.delete(p.id); const q = POP.p.get(p.id); if (q && q.s === ST.VIAGGIO && q.car) popReach(q); }; }
+  else if (t.k === 'in') { t.arr.car = true; v.onArrive = () => popSettle(t.arr); }
+  else if (t.k === 'tin') { v.onArrive = () => { if (t.g.s === 0) t.g.t = Math.min(t.g.t, S.time); }; }
+  return true;
+}
+// camion e furgoni delle merci e chi attraversa la città senza fermarsi (non sono abitanti)
+function spawnGoodsTrip() {
+  const outs = POP.outs, r = rand(); let from = null, to = null, fromO = null, toO = null, kind = 'truck';
+  if (r < 0.5 && lists.ind.length) { from = pick(lists.ind); kind = rand() < 0.6 ? 'truck' : 'van'; if (rand() < 0.5 && outs.length && !S.cargoHub) toO = pick(outs); else if (lists.com.length) to = pick(lists.com); else return false; }
+  else if (r < 0.75 && outs.length && (lists.com.length || lists.ind.length)) { fromO = pick(outs); to = pick(lists.ind.length ? lists.ind : lists.com); }
+  else if (outs.length >= 2) { fromO = pick(outs); toO = pick(outs); if (fromO === toO) return false; kind = rand() < 0.3 ? 'truck' : 'car'; }
+  else return false;
+  if (kind === 'truck' && S.policies.heavy && to && ZT[to.zone].k !== 'I' && rand() < 0.6) kind = 'van';
+  const A = fromO ? outsideLeg(fromO) : legOf(from), B = toO ? outsideLeg(toO) : legOf(to);
+  if (!A || !B || !A.seg || !B.seg) return false;
+  const legs = findPath(A.seg, A.along, B.seg, B.along, 'car'); if (!legs) return false;
+  const nv = spawnVehicle(kind, legs, { goods: kind !== 'car' });
+  if (nv && fromO && toO) { nv.thru = true; stats.thruN = (stats.thruN || 0) + 1; }
+  return !!nv;
+}
+genTrips = function () {
+  pathBudget = 5;
+  if (!S) return;
+  const hour = S.time % 24, night = hour < 5.5 || hour > 22.5;
+  const target = tripTarget() * (night ? 0.35 : 1);
+  let cars = 0, other = 0; for (const v of vehicles) if (!v.line && !VK[v.kind].rail) { cars++; if (v.goods || v.thru) other++; }
+  while (cars < target && pathBudget > 0) {
+    pathBudget--;
+    if (POP.trips.length && (other >= target * 0.3 || rand() < 0.8)) { if (spawnPersonTrip(POP.trips.pop())) cars++; continue; }
+    if (spawnGoodsTrip()) { cars++; other++; }
+  }
+};
+// i veicoli tolti a metà strada (bloccati, strada demolita): la persona arriva lo stesso più tardi
+const _despawnVehicleP = despawnVehicle;
+despawnVehicle = function (v) { if (v.pid && POP.carOf.get(v.pid) === v) POP.carOf.delete(v.pid); _despawnVehicleP(v); };
+
+// ---------- seguire un cittadino vero ----------
+function citName(p) { const f = p.f || p.id; return NAMES_F[(p.id * 7) % NAMES_F.length] + ' ' + NAMES_P[(f * 13) % NAMES_P.length]; }
+function citJob(p) {
+  if (p.a < 6) return L('all\'asilo', 'at preschool'); if (p.a < 18) return L('studente', 'student');
+  if (p.j) { const o = jobSite(p.j), k = siteKind(p.j); const w = k === 'C' || k === 'M' ? L('lavora in un negozio', 'works in a shop') : k === 'O' ? L('impiegato in ufficio', 'office worker') : k === 'I' ? L('operaio', 'factory worker') : L('lavora in ', 'works at ') + (o && SV[o.type] ? SV[o.type].n() : ''); return w + (o && o.seg != null && segs.get(o.seg) && streetName(segs.get(o.seg)) ? ' (' + streetName(segs.get(o.seg)) + ')' : ''); }
+  if (p.a >= 65) return L('in pensione', 'retired'); return L('cerca lavoro', 'unemployed');
+}
+const ST_N = () => [L('a casa', 'at home'), L('in viaggio', 'travelling'), L('al lavoro', 'at work'), L('nei negozi', 'shopping'), L('fuori città', 'out of town')];
+followCitizen = function (pid) {
+  const p = POP.p.get(pid); if (!p) return;
+  let v = POP.carOf.get(pid); if (v && !vehicles.has(v)) v = null;
+  if (!v) {
+    if (p.s !== ST.VIAGGIO) {
+      if (p.s === ST.CASA && p.j && siteMax(jobSite(p.j))) goTo(p, p.j, ST.LAVORO, true);
+      else if (p.s === ST.CASA) { const b = pickShop(p); if (b) goTo(p, b.id, ST.NEGOZIO, true); }
+      else goHome(p);
+    }
+    if (p.s === ST.VIAGGIO) {
+      const last = POP.trips[POP.trips.length - 1]; if (last && last.pid === pid) POP.trips.pop();
+      const dst = p.ts === ST.LAVORO ? jobSite(p.j) : p.ts === ST.CASA ? (p.h > 0 ? buildings.get(p.h) : null) : buildings.get(p.to);
+      p.m = 'c'; p.car = false; p.t = Math.max(p.t, S.time + 1);
+      if (spawnPersonTrip({ k: 'p', pid, A: p.wa, B: dst, G: !p.wa || !dst ? pick(POP.outs) : null, t: S.time })) v = POP.carOf.get(pid);
+    }
+  }
+  if (!v) { toast(L('Non trova una strada per uscire', 'No route to go anywhere'), 2500); return; }
+  const hb = p.h > 0 ? buildings.get(p.h) : null, dst = p.ts === ST.LAVORO ? jobSite(p.j) : buildings.get(p.to);
+  const goal = (p.ts === ST.LAVORO ? L('al lavoro in ', 'to work in ') : p.ts === ST.NEGOZIO ? L('a fare la spesa in ', 'shopping in ') : L('verso casa in ', 'home to ')) + (dst && segs.get(dst.seg) ? streetName(segs.get(dst.seg)) || '?' : L('fuori città', 'out of town'));
+  v.cit = { name: citName(p), age: Math.floor(p.a), job: citJob(p), addr: hb ? bldAddr(hb) : L('fuori città', 'out of town'), goal };
+  const cb = v.onArrive; v.onArrive = (x) => { if (cb) cb(x); toast('👤 ' + v.cit.name + L(' è arrivato', ' has arrived'), 3000); };
+  followVeh = v; selected = { kind: 'veh', obj: v }; openSide('sel'); cam.dist = Math.min(cam.dist, 260);
+};
+// scheda dell'edificio: chi ci vive / chi ci lavora, con i numeri veri
+function popCardHTML(o) {
+  const row = (a, b) => `<div class="row"><span>${a}</span><span>${b}</span></div>`; let h = '';
+  if (o.hh) {
+    let home = 0; const ppl = []; for (const fid of o.fams || []) { const f = POP.f.get(fid); if (f) for (const id of f.m) { const p = POP.p.get(id); if (p) { ppl.push(p); if (p.s === ST.CASA) home++; } } }
+    h += row(L('Famiglie', 'Households'), `${o.occ} / ${o.hh}`) + row(L('Abitanti', 'Residents'), `${o.res || 0} / ${o.cap} ${L('max', 'max')}`) + row(L('In casa adesso', 'At home now'), home) + ((o.resv || 0) ? row(L('Famiglie in arrivo', 'Families moving in'), o.resv) : '');
+    if (ppl.length) {
+      h += `<div class="sec">${L('Chi ci vive', 'Who lives here')}</div>`;
+      for (const p of ppl.slice(0, 8)) { const nm = citName(p); h += `<div class="row"><span>${nm}, ${Math.floor(p.a)}</span><span style="text-align:right">${citJob(p)} · ${ST_N()[p.s]} <button title="${L('Segui', 'Follow')}" style="padding:0 5px" onclick="followCitizen(${p.id})">🎥</button></span></div>`; }
+      if (ppl.length > 8) h += `<div style="font-size:12px;color:var(--mute)">${L('e altri', 'and')} ${ppl.length - 8} ${L('', 'more')}</div>`;
+    }
+  }
+  if (o.jobs) {
+    let at = 0, comm = 0; for (const id of o.wl || []) { const p = POP.p.get(id); if (!p) continue; if (p.s === ST.LAVORO) at++; if (p.h === OUTH) comm++; }
+    h += row(L('Impiegati', 'Employees'), `${o.wk || 0} / ${o.jobs} ${L('max', 'max')}`) + row(L('Al lavoro adesso', 'At work now'), at) + (comm ? row(L('di cui pendolari da fuori', 'of which commuters'), comm) : '');
+    if (o.cmax) h += row(L('Clienti adesso', 'Customers now'), `${o.cust || 0} / ${o.cmax} ${L('max', 'max')}`);
+  }
+  return h;
+}
+
+// ---------- pedoni: solo le persone vere che stanno camminando ----------
+function popWalkersNear(cx, cz, r, max) {
+  const out = [];
+  for (const id of POP.walk) { const p = POP.p.get(id); if (!p || p.s !== ST.VIAGGIO || p.m !== 'w' || !p.ws) continue; if (Math.abs(p.ws.x - cx) > r || Math.abs(p.ws.z - cz) > r) continue; out.push(p); if (out.length >= max) break; }
+  return out;
+}
+
+// ---------- salvataggi: le persone vengono salvate una per una ----------
+function popPack() {
+  const pp = []; for (const p of POP.p.values()) pp.push(p.id, p.f, p.h, Math.round(p.a * 10), p.j, p.sh);
+  const tg = []; for (const g of POP.tour.values()) if (g.s === 1) tg.push(g.n, g.at, Math.round((g.t2 - S.time) * 10));
+  return { v: 1, p: pp, t: tg, nP: POP.nP, nF: POP.nF, nT: POP.nT, log: POP.tourLog.map(x => [Math.round((x[0] - S.time) * 10), x[1]]) };
+}
+function popClearBlds() { for (const b of buildings.values()) { b.res = 0; b.wk = 0; b.cust = 0; b.resv = 0; b.fams = new Set(); b.wl = new Set(); if (b.hh || b.jobs) b.occ = 0; } for (const s of svcs.values()) { s.wl = new Set(); s.wk = 0; } }
+function popUnpack(d) {
+  popReset(); popClearBlds();
+  POP.nP = d.nP || 1; POP.nF = d.nF || 1; POP.nT = d.nT || 1;
+  const fams = new Map(), jobs = [];
+  for (let i = 0; i < d.p.length; i += 6) {
+    const [id, fid, h, a10, j, sh] = d.p.slice(i, i + 6);
+    const p = { id, f: fid, h, a: a10 / 10, j: 0, s: h === OUTH ? ST.FUORI : ST.CASA, at: 0, t: 0, sh, to: 0, ts: 0, m: '' };
+    POP.p.set(id, p); POP.where[p.s]++;
+    if (h === OUTH) POP.comm++;
+    else { let f = fams.get(fid); if (!f) { f = { id: fid, h: NOHOME, m: [] }; fams.set(fid, f); POP.f.set(fid, f); } f.m.push(id); }
+    if (j) jobs.push([p, j]);
+  }
+  for (const f of fams.values()) { const hid = POP.p.get(f.m[0])?.h; const b = buildings.get(hid); if (b && b.hh && b.occ < b.hh) famIn(f, b); else famOut(f); }
+  for (const p of POP.p.values()) if (p.h !== OUTH && workAge(p)) POP.unemp.add(p.id);
+  for (const [p, j] of jobs) { const o = jobSite(j); if (o && (o.wk || 0) < siteMax(o)) { const sh = p.sh; popHire(p, o, j); p.sh = sh; } else if (p.h === OUTH) popDel(p); }
+  for (let i = 0; i < (d.t || []).length; i += 3) { const b = buildings.get(d.t[i + 1]); if (!b) continue; const g = { id: POP.nT++, n: d.t[i], at: b.id, s: 1, t: S.time, t2: S.time + d.t[i + 2] / 10, or: 'strada' }; POP.tour.set(g.id, g); b.cust = (b.cust || 0) + g.n; }
+  POP.tourLog = (d.log || []).map(x => [S.time + x[0] / 10, x[1]]);
+}
+// vecchi salvataggi (prima delle persone vere): dalle famiglie e dai lavoratori salvati si creano persone vere
+function popMigrate() {
+  const oldOcc = new Map(); for (const b of buildings.values()) oldOcc.set(b.id, b.occ || 0);
+  popReset(); popClearBlds(); POP.outs = outsideNodes();
+  for (const b of buildings.values()) {
+    if (!b.hh || b.aband || b.ruin) continue;
+    const n = Math.min(b.hh, oldOcc.get(b.id));
+    for (let i = 0; i < n; i++) { const f = { id: POP.nF++, h: NOHOME, m: [] }; POP.f.set(f.id, f); for (const a of famComp()) popNew(f, NOHOME, a); famIn(f, b); }
+  }
+  for (const b of buildings.values()) {
+    if (!b.jobs || b.aband || b.ruin) continue;
+    let need = Math.min(siteMax(b), b.hh ? Math.round(b.jobs * 0.8) : oldOcc.get(b.id));
+    while (need > 0) { const p = pickWorker(b); if (!p) break; popHire(p, b, b.id); need--; }
+    while (need > 0 && POP.outs.length) { const p = popNew(null, OUTH, 22 + rand() * 40); POP.comm++; popHire(p, b, b.id); need--; }
+  }
+}
+const _serializeP = serialize;
+serialize = function () { S.ppl = popPack(); try { return _serializeP(); } finally { delete S.ppl; } };
+const _deserializeGP = deserializeG;
+deserializeG = function* (json) {
+  yield* _deserializeGP(json);
+  const d = S.ppl; delete S.ppl;
+  if (d && d.v === 1) popUnpack(d); else popMigrate();
+  S.flow = S.flow || flowZero();
+  popHour(); computeStats(); computeDemand(); refreshLists();
+};
+const _resetWorldP = resetWorld;
+resetWorld = function () { popReset(); stats.flowM = flowZero(); stats.flowLast = flowZero(); _resetWorldP(); };
+const _destroyBuildingP = destroyBuilding;
+destroyBuilding = function (b, keepCells) { if (b && buildings.has(b.id)) popEvict(b, 'move'); _destroyBuildingP(b, keepCells); };
+const _hourlyP = hourly;
+hourly = function () { _hourlyP(); if (S) popHour(); };
+// statistiche finali con i numeri veri (dopo tutte le altre regole)
+const _computeStatsP = computeStats;
+computeStats = function () {
+  _computeStatsP();
+  stats.tourTarget = stats.tourists; stats.tourists = POP.tourLog.reduce((a, x) => a + x[1], 0);
+  const w = POP.where; stats.where = { casa: w[0], viaggio: w[1], lavoro: w[2], negozi: w[3], fuori: w[4] };
+  let arriving = 0; for (const a of POP.arr) if (!a.done) arriving += a.ages.length; stats.arriving = arriving;
+  stats.homeless = POP.hl;
+};
+// pannello Statistiche: dove sono adesso le persone e quante sono entrate/uscite
+function popWhereHTML(row) {
+  const w = stats.where || {}, F = S.flow || flowZero(), M = stats.flowM || flowZero();
+  return `<div class="sec">${L('Dove sono adesso', 'Where people are now')}</div>` +
+    row('🏠 ' + L('A casa', 'At home'), fmtNum(w.casa || 0)) + row('💼 ' + L('Al lavoro', 'At work'), fmtNum(w.lavoro || 0)) + row('🛍️ ' + L('Nei negozi', 'Shopping'), fmtNum(w.negozi || 0)) + row('🚗 ' + L('In viaggio', 'Travelling'), fmtNum(w.viaggio || 0)) + row('🛣️ ' + L('Pendolari ancora fuori città', 'Commuters still outside'), fmtNum(w.fuori || 0)) +
+    row('🏕️ ' + L('Senzatetto', 'Homeless'), fmtNum(stats.homeless || 0)) + row('📦 ' + L('Famiglie in arrivo (persone)', 'Moving in (people)'), fmtNum(stats.arriving || 0)) + row('📸 ' + L('Turisti in città adesso', 'Tourists in town now'), fmtNum(stats.tourHere || 0)) +
+    `<div class="sec">${L('Entrati e usciti', 'In and out')} <span style="font-weight:normal;color:var(--mute)">(${L('questo mese / da sempre', 'this month / all time')})</span></div>` +
+    row('🛣️ ' + L('Arrivati in auto', 'Arrived by road'), `${fmtNum(M.in.strada)} / ${fmtNum(F.in.strada)}`) + row('🚆 ' + L('Arrivati in treno', 'Arrived by train'), `${fmtNum(M.in.treno)} / ${fmtNum(F.in.treno)}`) + row('⛴️ ' + L('Arrivati in nave', 'Arrived by ship'), `${fmtNum(M.in.nave)} / ${fmtNum(F.in.nave)}`) + row('👶 ' + L('Nati', 'Born'), `${fmtNum(M.in.nati)} / ${fmtNum(F.in.nati)}`) +
+    row('🚚 ' + L('Partiti', 'Moved away'), `${fmtNum(M.out.partiti)} / ${fmtNum(F.out.partiti)}`) + row('⚰️ ' + L('Morti', 'Died'), `${fmtNum(M.out.morti)} / ${fmtNum(F.out.morti)}`);
+}
+
 // ---------- rotellina in alto a destra: statistiche dei primi 10 minuti di gioco ----------
 // Conta solo il tempo in cui il gioco va (non in pausa, non nel menu). Legge gli stessi dati del gioco:
 // famiglie nelle case (b.occ), soldi (S.money e il bilancio mensile S.lastBudget), edifici, servizi e strade.
@@ -6995,7 +7485,7 @@ loadBar = function (f, txt) {
 const ST10_DUR = 600; // secondi reali
 const st10 = { S: null, prev: new Map(), money: 0, bud: null, t: 0, tick: 0, open: false, rot: 0, rotT: 0 };
 function st10New() {
-  return { t: 0, t0: S.time, done: 0, arr: 0, left: 0, orig: {}, min: Array(10).fill(0), spent: 0, earned: 0, loans: 0, snap: null };
+  return { real: 1, arrF: 0, t: 0, t0: S.time, done: 0, arr: 0, left: 0, orig: {}, min: Array(10).fill(0), spent: 0, earned: 0, loans: 0, snap: null };
 }
 // da dove arrivano: le stesse strade/binari/porti che collegano la città al bordo della mappa (senza nomi di città)
 function st10Dir(dx, dz) {
@@ -7026,6 +7516,17 @@ function st10Add(b, n) {
   let r = n; o.forEach((x, i) => { const k = i === o.length - 1 ? r : Math.min(r, Math.round(n * x[1] / tot)); r -= k; if (k > 0) st.orig[x[0]] = (st.orig[x[0]] || 0) + k; });
   st.arr += n; st.min[Math.min(9, Math.floor(st.t / 60))] += n;
 }
+// arrivi veri (25-popolazione.js): persone esatte e il collegamento da cui sono davvero entrate
+function st10Real(b, n, or) {
+  const st = S && S.st10; if (!st || !st.real || st.done) return;
+  let k;
+  if (or === 'treno') k = '🚆 ' + L('Treno (ferrovia dal bordo mappa)', 'Train (railway from the map edge)');
+  else if (or === 'nave') k = '🚢 ' + L('Nave (porto passeggeri)', 'Ship (passenger harbor)');
+  else if (or === 'nati') k = '👶 ' + L('Nati in città', 'Born in the city');
+  else k = st10Origins(b)[0][0];
+  st.orig[k] = (st.orig[k] || 0) + n; st.arr += n; if (or !== 'nati') st.arrF++; st.min[Math.min(9, Math.floor(st.t / 60))] += n;
+}
+function st10LeftReal(n) { const st = S && S.st10; if (st && st.real && !st.done) st.left += n; }
 function st10Counts() {
   const c = { R: 0, M: 0, C: 0, O: 0, I: 0, svc: 0, km: 0, pop: stats.pop || 0, jobs: stats.jobs || 0 };
   for (const b of buildings.values()) { if (b.ruin) continue; const z = ZT[b.zone]; if (z) c[z.k]++; }
@@ -7055,13 +7556,13 @@ function st10Step(dt) {
   if (!st.done && st10.tick > 0.5) {
     st10.tick = 0;
     const seen = new Set();
-    for (const b of buildings.values()) {
+    if (!st.real) for (const b of buildings.values()) {
       if (!b.hh || b.ruin) continue; seen.add(b);
       const o = st10.prev.get(b) || 0, n = b.occ || 0;
       if (n > o) st10Add(b, n - o); else if (n < o) st.left += o - n;
       st10.prev.set(b, n);
     }
-    for (const [b, o] of st10.prev) if (!seen.has(b)) { st.left += o; st10.prev.delete(b); }
+    if (!st.real) for (const [b, o] of st10.prev) if (!seen.has(b)) { st.left += o; st10.prev.delete(b); }
     if (st.t >= ST10_DUR) { st.done = 1; st.t = ST10_DUR; st.snap = st10Counts(); st.days = (S.time - st.t0) / 24; toast(L('📊 Primi 10 minuti finiti: il riepilogo è nella rotellina in alto a destra', '📊 First 10 minutes over: the summary is in the dial at the top right'), 5000); }
   }
   st10.rotT += dt; if (st10.rotT > 3) { st10.rotT = 0; st10.rot++; }
@@ -7091,7 +7592,7 @@ function st10Step(dt) {
   const hud = $('hud'); hud.appendChild(w); hud.appendChild(p);
 })();
 const st10Time = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
-function st10Ppl() { return stats.hh > 0 && stats.pop > 0 ? stats.pop / stats.hh : 2.6; }
+function st10Ppl() { if (S && S.st10 && S.st10.real) return 1; return stats.hh > 0 && stats.pop > 0 ? stats.pop / stats.hh : 2.6; }
 function st10Wheel() {
   const st = S.st10, f = st.t / ST10_DUR;
   $('st10ring').setAttribute('stroke-dashoffset', (100.5 * (1 - f)).toFixed(1));
@@ -7118,7 +7619,7 @@ function st10Draw() {
   let h = `<h3><span>📊 ${L('Primi 10 minuti', 'First 10 minutes')}</span><button class="x" onclick="document.getElementById('st10').onclick()">✕</button></h3>`;
   h += `<div style="opacity:.75;font-size:12px">${st.done ? L('Finiti: questi sono i numeri dei primi 10 minuti.', 'Done: these are the numbers of the first 10 minutes.') : L('Il tempo conta solo quando il gioco non è in pausa.', 'Time only counts while the game is not paused.')}</div>`;
   h += `<h4>⏱️ ${L('Tempo', 'Time')}</h4>` + row(L('Tempo di gioco', 'Play time'), st10Time(st.t) + ' / 10:00') + row(L('Tempo passato nella città', 'Time passed in the city'), Math.floor(days) + L(' giorni ', ' days ') + Math.floor((days % 1) * 24) + L(' ore', ' h'));
-  h += `<h4>👥 ${L('Abitanti', 'Residents')}</h4>` + row(L('Arrivati in città', 'Moved in'), fmtNum(st.arr * ppl) + ` <span style="opacity:.6;font-weight:400">(${fmtNum(st.arr)} ${L('famiglie', 'households')})</span>`) + row(L('Andati via', 'Moved out'), fmtNum(st.left * ppl)) + row(L('In città adesso', 'In the city now'), fmtNum(stats.pop || 0));
+  h += `<h4>👥 ${L('Abitanti', 'Residents')}</h4>` + row(L('Arrivati in città', 'Moved in'), fmtNum(st.arr * ppl) + ` <span style="opacity:.6;font-weight:400">(${fmtNum(st.real ? st.arrF : st.arr)} ${L('famiglie', 'households')})</span>`) + row(L('Andati via', 'Moved out'), fmtNum(st.left * ppl)) + row(L('In città adesso', 'In the city now'), fmtNum(stats.pop || 0));
   h += `<h4>🧭 ${L('Da dove arrivano', 'Where they come from')}</h4>`;
   const og = Object.entries(st.orig).sort((a, b) => b[1] - a[1]);
   if (!og.length) h += `<div style="opacity:.7">${L('Ancora nessuno: servono strade collegate all\'autostrada, zone residenziali, acqua ed elettricità.', 'Nobody yet: you need roads linked to the highway, residential zones, water and power.')}</div>`;
