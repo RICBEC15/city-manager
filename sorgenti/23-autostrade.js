@@ -69,16 +69,41 @@ function rhwSync() {
 function rhwDrawRest(C, done, wide) {
   if (RHW.mesh) { scene.remove(RHW.mesh); RHW.mesh.geometry.dispose(); RHW.mesh = null; }
   if (!C) return;
-  const p = [];
+  const p = [], touched = new Set();
+  // altezza del terreno in un punto (e segno i 4 punti del terreno intorno: da lontano lì il terreno scende)
+  const hAt = (x, z, mark) => {
+    if (mark) {
+      const fx = clamp((x + HALF) / HC, 0, HN - 1.001), fz = clamp((z + HALF) / HC, 0, HN - 1.001), i = Math.floor(fx), j = Math.floor(fz), k = j * HN + i;
+      for (const q of [k, k + 1, k + HN, k + HN + 1]) if (H[q] >= WATER + 0.8 && roadmMark(q)) touched.add(q);
+    }
+    return Math.max(getH(x, z), WATER);
+  };
+  const ys = [], xs = [], zs = [];
   for (const c of C.chains) {
     const w = (c.kind >= 2 ? 3.5 : c.kind === 1 ? 11 : 6.5) * (wide ? (c.kind >= 2 ? 12 : 18) : 1);
     for (let i = 0; i < c.xs.length - 1; i++) {
       if (done.has(c.base + i) || c.f[i] === '2') continue;
       const ax = c.xs[i], az = c.zs[i], bx = c.xs[i + 1], bz = c.zs[i + 1], l = Math.hypot(bx - ax, bz - az) || 1, nx = -(bz - az) / l * w, nz = (bx - ax) / l * w;
-      const br = wide ? 25 : c.f[i] === '1' ? 9 : 1.2, ya = Math.max(getH(ax, az), WATER) + br, yb = Math.max(getH(bx, bz), WATER) + br;
-      p.push(ax - nx, ya, az - nz, ax + nx, ya, az + nz, bx + nx, yb, bz + nz, ax - nx, ya, az - nz, bx + nx, yb, bz + nz, bx - nx, yb, bz - nz);
+      const br = wide ? 25 : c.f[i] === '1' ? 9 : 1.2, mark = !wide && c.f[i] !== '1';
+      // punti ogni 20 m al massimo, poi tengo solo quelli che servono perché il nastro resti sopra il terreno (in pianura resta un pezzo solo)
+      const m = Math.max(1, Math.ceil(l / 20)); xs.length = ys.length = zs.length = 0;
+      for (let k = 0; k <= m; k++) {
+        const x = ax + (bx - ax) * k / m, z = az + (bz - az) * k / m;
+        xs.push(x); zs.push(z); ys.push((wide ? Math.max(getH(x, z), WATER) : Math.max(hAt(x, z, mark), hAt(x + nx, z + nz, mark), hAt(x - nx, z - nz, mark))) + br);
+      }
+      let s0 = 0;
+      while (s0 < m) {
+        let e = m;
+        for (; e > s0 + 1; e--) { let ok = true; for (let k = s0 + 1; k < e && ok; k++) if (ys[s0] + (ys[e] - ys[s0]) * (k - s0) / (e - s0) < ys[k] - 0.05) ok = false; if (ok) break; }
+        const x1 = xs[s0], z1 = zs[s0], y1 = ys[s0], x2 = xs[e], z2 = zs[e], y2 = ys[e];
+        p.push(x1 - nx, y1, z1 - nz, x1 + nx, y1, z1 + nz, x2 + nx, y2, z2 + nz, x1 - nx, y1, z1 - nz, x2 + nx, y2, z2 + nz, x2 - nx, y2, z2 - nz);
+        s0 = e;
+      }
     }
   }
+  // punti del terreno appena segnati sotto le autostrade: rifaccio solo quei pezzi di terreno (da lontano scendono sotto il nastro)
+  const tc = new Set(); for (const k of touched) tc.add(Math.floor(((k / HN) | 0) / TCH) * NTC + Math.floor((k % HN) / TCH));
+  for (const c of tc) { const ci = c % NTC, cj = (c / NTC) | 0; updateTerrain(ci * TCH + 1, cj * TCH + 1, ci * TCH + TCH - 2, cj * TCH + TCH - 2); }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
   RHW.mesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: wide ? 0xffa030 : 0x585b61, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }));
   RHW.mesh.renderOrder = 2; RHW.mesh.frustumCulled = false; scene.add(RHW.mesh);
@@ -228,4 +253,9 @@ updateGhost = function () {
   const p = pickInfo(g); ghost.add(circle(p.cx, p.cz, TILE * 1.5, p.w > 0.75 ? ghostMatBad : ghostMatOk));
   tipShow(`<b>${L('Inizia qui', 'Start here')}</b> · 3 x 3 ${L('caselle', 'tiles')}${p.w > 0.05 ? ' · 🌊 ' + Math.round(p.w * 100) + '% ' + L('acqua', 'water') : ''}${MAPH[MAPID] ? ' · ' + (p.hw ? '🛣️ ' + L('autostrada vicina', 'highway nearby') : L('nessuna autostrada vicina: ne faremo una di collegamento', 'no highway nearby: we will add a link road')) : ''}`);
 };
+// tante strade insieme: il terreno sotto le strade lo sistemo una volta sola alla fine (più veloce sui PC lenti)
+const _rhwSync12c = rhwSync;
+rhwSync = function () { carveHold++; try { return _rhwSync12c(); } finally { carveRelease(); } };
+const _deserializeG12c = deserializeG;
+deserializeG = function* (json) { carveHold++; try { yield* _deserializeG12c(json); } finally { carveRelease(); } };
 if (typeof __cm !== 'undefined') Object.assign(__cm, { RHW, RHW_READY, rhwSync, startPick, pickStartAt, newGame });

@@ -7,7 +7,7 @@ function resetWorld() {
   for (const b of buildings.values()) removeParts(b.parts); buildings.clear(); bldBuckets.clear();
   for (const sv of svcs.values()) removeParts(sv.parts); svcs.clear(); svcBuckets.clear();
   for (const [, ms] of chunkMeshes) for (const m of ms) { scene.remove(m); m.geometry.dispose(); } chunkMeshes.clear();
-  segs.clear(); nodes.clear(); segBuckets.clear(); roadDirty.clear(); nextNodeId = 1; nextSegId = 1; nextBldId = 1; nextSvcId = 1; nextLineId = 1;
+  segs.clear(); nodes.clear(); segBuckets.clear(); roadDirty.clear(); ROADM.fill(0); roadmNew = 0; nextNodeId = 1; nextSegId = 1; nextBldId = 1; nextSvcId = 1; nextLineId = 1;
   cells.length = 0; freeCells.length = 0; claimM.clear(); cellsDirty = true;
   lines = []; metroTrains.length = 0; powerLines = []; rebuildPowerLines();
   for (const s of ships) s.parts.forEach(p => extra.remove(p.i, 'i')); ships.length = 0;

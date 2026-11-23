@@ -114,6 +114,60 @@ function flattenUnder(s) {
 }
 const changedTerrain = [];
 function terrainChanged(i0, j0, i1, j1) { changedTerrain.push([i0, j0, i1, j1]); }
+// ---------- la strada non finisce mai sotto il terreno ----------
+// Il terreno ha un punto ogni 40 m: abbasso i 4 punti intorno a ogni pezzo di strada se stanno più in alto della strada
+// (succede quando una strada vicina, l'imbocco di una galleria o una collina tra due punti alzano il terreno).
+// ROADM ricorda i punti sotto le strade: da lontano il terreno meno dettagliato si abbassa lì e non copre le strade.
+const ROADM = new Uint8Array(HN * HN);
+let roadmNew = 0;
+function roadmMark(k) { if (ROADM[k]) return false; ROADM[k] = 1; roadmNew++; return true; }
+const _cK = new Int32Array(4), _cW = new Float32Array(4);
+function carveSeg(s) {
+  const P = s.pts; if (!P || P.length < 2 || s.elev < 0) return null; // gallerie e trincee hanno già il loro scavo
+  const hw = RT[s.type].w / 2 + 0.6, n = P.length, K = _cK, W = _cW;
+  let i0 = 1e9, j0 = 1e9, i1 = -1, j1 = -1;
+  const grow = k => { const ii = k % HN, jj = (k / HN) | 0; if (ii < i0) i0 = ii; if (jj < j0) j0 = jj; if (ii > i1) i1 = ii; if (jj > j1) j1 = jj; };
+  for (let i = 0; i < n; i++) {
+    const p = P[i]; if (deepPt(s, p)) continue;
+    const q = P[Math.min(i + 1, n - 1)], r = P[Math.max(i - 1, 0)], l = Math.hypot(q.x - r.x, q.z - r.z) || 1, nx = -(q.z - r.z) / l, nz = (q.x - r.x) / l;
+    const t = Math.max(p.y - 0.3, 0.9); // mai sotto il livello del mare: non nascono laghetti
+    for (let o = -1; o <= 1; o += 0.5) {
+      const fx = (p.x + nx * hw * o + HALF) / HC, fz = (p.z + nz * hw * o + HALF) / HC; if (fx < 0 || fz < 0 || fx >= HN - 1 || fz >= HN - 1) continue;
+      const ci = Math.floor(fx), cj = Math.floor(fz), u = fx - ci, v = fz - cj, k0 = cj * HN + ci;
+      K[0] = k0; K[1] = k0 + 1; K[2] = k0 + HN; K[3] = k0 + HN + 1; W[0] = (1 - u) * (1 - v); W[1] = u * (1 - v); W[2] = (1 - u) * v; W[3] = u * v;
+      let e = 0, sw = 0; for (let c = 0; c < 4; c++) { const d = H[K[c]] - t; e += W[c] * d; if (d > 0 && H[K[c]] >= 0.8) sw += W[c] * d; }
+      // abbasso solo quanto basta (i punti più alti e più vicini di più): così non tolgo i terrapieni delle strade vicine
+      if (e > 0 && sw > 0) {
+        const lam = Math.min(1, e / sw);
+        for (let c = 0; c < 4; c++) { const k = K[c]; if (H[k] > t && H[k] >= 0.8) { H[k] -= (H[k] - t) * lam; grow(k); } }
+      }
+      for (let c = 0; c < 4; c++) if (t - H[K[c]] < 4.5 && H[K[c]] >= 0.8 && roadmMark(K[c])) grow(K[c]);
+    }
+  }
+  return i1 >= 0 ? [i0, j0, i1, j1] : null;
+}
+function refreshSegH(s) { if (s.pts && s.elev >= 0) for (const p of s.pts) p.h = getH(p.x, p.z); }
+// dopo una strada nuova: lei e quelle vicine (che il suo terreno spianato può aver coperto).
+// Quando si fanno tante strade insieme (autostrade vere, caricamento) lo faccio una volta sola alla fine.
+let carveHold = 0; const carvePend = new Set();
+function carveNear(s) { carvePend.add(s); if (!carveHold) carveFlush(); }
+function carveRelease() { if (--carveHold <= 0) { carveHold = 0; carveFlush(); } }
+function carveFlush() {
+  if (!carvePend.size) return;
+  const list = [...carvePend].filter(s => segs.get(s.id) === s); carvePend.clear();
+  const todo = new Set();
+  for (const s of list) {
+    let x0 = 1e9, z0 = 1e9, x1 = -1e9, z1 = -1e9; for (const p of s.pts) { x0 = Math.min(x0, p.x); z0 = Math.min(z0, p.z); x1 = Math.max(x1, p.x); z1 = Math.max(z1, p.z); }
+    for (const id of segsNear((x0 + x1) / 2, (z0 + z1) / 2, Math.max(x1 - x0, z1 - z0) / 2 + 110)) todo.add(id);
+  }
+  for (const id of todo) {
+    const t = segs.get(id); if (!t) continue;
+    const r = carveSeg(t); if (!r) continue;
+    refreshSegH(t); markRoadDirty(t);
+    updateTerrain(r[0] - 1, r[1] - 1, r[2] + 1, r[3] + 1); terrainChanged(r[0], r[1], r[2], r[3]);
+  }
+  for (const s of list) refreshSegH(s);
+}
 
 // ---------- archi del grafo ----------
 let nextEdgeId = 1;
@@ -147,6 +201,7 @@ function addSeg(a, b, type, cx = null, cz = null, elev = 0, id = null) {
   if (s.nm == null) nameSeg(s);
   bucketAddSeg(s);
   flattenUnder(s);
+  carveNear(s);
   const hw = RT[s.type].w / 2 + (s.elev < 0 ? 16 : 2);
   for (const p of s.pts) clearTrees((x, z) => true, p.x, p.z, hw);
   s.chunk = tileIdx(s.pts[s.pts.length >> 1].x, s.pts[s.pts.length >> 1].z);

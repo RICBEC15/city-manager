@@ -76,7 +76,7 @@ function terrColorAt(i, j, out) {
   const v = colNoise(x / 260, z / 260) * 0.5 + colNoise(x / 60, z / 60) * 0.2;
   let r, g, b;
   if (h < WATER - 0.5) { r = 0.55; g = 0.52; b = 0.42; }
-  else if (h < 2.5) { r = 0.78; g = 0.72; b = 0.55; }
+  else if (h < 2.5 && !(ROADM[k] && H0[k] >= 2.5)) { r = 0.78; g = 0.72; b = 0.55; } // spiaggia (non dove una strada ha solo abbassato un prato)
   else { r = 0.36 + v * 0.1; g = 0.52 + v * 0.12; b = 0.25 + v * 0.05; const dry = smooth(80, 260, h); r = lerp(r, 0.47, dry * 0.5); g = lerp(g, 0.5, dry * 0.4); }
   const rock = Math.max(smooth(0.82, 0.62, ny), smooth(380, 560, h) * 0.8);
   r = lerp(r, 0.5, rock); g = lerp(g, 0.47, rock); b = lerp(b, 0.43, rock);
@@ -89,7 +89,9 @@ function buildChunk(ch, step) {
   if (!colNoise) colNoise = makeNoise(99);
   const SZ = ch.sz || TCH, n = SZ / step + 1, nv = n * n + 4 * n, pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), col = new Float32Array(nv * 3);
   let v = 0, ymin = 1e9, ymax = -1e9;
-  const put = (i, j, drop) => { terrColorAt(i, j, _tc); pos[v * 3] = _tc[0]; pos[v * 3 + 1] = _tc[1] - drop; pos[v * 3 + 2] = _tc[2]; nor[v * 3] = _tc[3]; nor[v * 3 + 1] = _tc[4]; nor[v * 3 + 2] = _tc[5]; col[v * 3] = _tc[6]; col[v * 3 + 1] = _tc[7]; col[v * 3 + 2] = _tc[8]; if (_tc[1] < ymin) ymin = _tc[1]; if (_tc[1] > ymax) ymax = _tc[1]; v++; };
+  // da lontano (meno punti) il terreno scende dove ci sono strade, così non le copre
+  const low = step > 1 && step <= 8, lowY = (i, j, y) => { for (let b = Math.max(j - step, 0), b1 = Math.min(j + step, HN - 1); b <= b1; b++) for (let a = Math.max(i - step, 0), a1 = Math.min(i + step, HN - 1), r = b * HN; a <= a1; a++) if (ROADM[r + a] && H[r + a] < y) y = H[r + a]; return y; };
+  const put = (i, j, drop) => { terrColorAt(i, j, _tc); if (low) _tc[1] = lowY(i, j, _tc[1]); pos[v * 3] = _tc[0]; pos[v * 3 + 1] = _tc[1] - drop; pos[v * 3 + 2] = _tc[2]; nor[v * 3] = _tc[3]; nor[v * 3 + 1] = _tc[4]; nor[v * 3 + 2] = _tc[5]; col[v * 3] = _tc[6]; col[v * 3 + 1] = _tc[7]; col[v * 3 + 2] = _tc[8]; if (_tc[1] < ymin) ymin = _tc[1]; if (_tc[1] > ymax) ymax = _tc[1]; v++; };
   const i0 = ch.ci * SZ, j0 = ch.cj * SZ;
   for (let b = 0; b < n; b++) for (let a = 0; a < n; a++) put(i0 + a * step, j0 + b * step, 0);
   // bordi abbassati (gonne) per non vedere fessure tra pezzi con dettaglio diverso
