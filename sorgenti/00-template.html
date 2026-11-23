@@ -64,7 +64,10 @@ input[type=range]{accent-color:var(--acc)}
 #loadBar .lbB{height:10px;background:rgba(255,255,255,.12);border-radius:5px;overflow:hidden}
 #loadBar .lbF{height:100%;width:0;background:var(--acc2);transition:width .15s}
 #toast{position:fixed;left:50%;top:74px;transform:translateX(-50%);background:rgba(10,16,24,.95);border:1px solid var(--acc2);border-radius:10px;padding:10px 18px;font-size:15px;display:none;z-index:60;max-width:80vw;text-align:center}
-#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:flex-start;padding-left:8vw;background:#000 url(data:image/jpeg;base64,SFONDO) center/cover no-repeat;z-index:100}
+#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:flex-start;padding-left:8vw;background:#000;overflow:hidden;z-index:100}
+#menu .mbg{position:absolute;inset:0;background:center/cover no-repeat;opacity:0;will-change:opacity,transform;animation:menuRot 64s linear infinite}
+#menu .pan{position:relative}
+@keyframes menuRot{0%{opacity:0;transform:scale(1)}2.4%{opacity:1}14.8%{opacity:1}17.2%{opacity:0;transform:scale(1.06)}100%{opacity:0;transform:scale(1.06)}}
 .pan{background:rgba(0,0,0,.55);backdrop-filter:blur(3px);border:1px solid rgba(255,200,140,.25);padding:26px 34px;border-radius:14px;min-width:340px;max-width:min(560px,90vw);max-height:88vh;overflow:auto}
 .pan h1{margin:0 0 4px;font-size:34px;letter-spacing:.5px}.pan .sub{color:#d9c3a5;margin-bottom:20px}
 .pan h2{margin:0 0 16px;font-size:24px}
@@ -136,7 +139,7 @@ input[type=range]{accent-color:var(--acc)}
 </div>
 <div id="tip"></div>
 <div id="toast"></div>
-<div id="menu"><div class="pan" id="menuPan"></div></div>
+<div id="menu"><!--MENUIMG--><div class="pan" id="menuPan"></div></div>
 <script>/*THREE_LIB*/</script>
 <script>bootP(THREE)</script>
 <!--DATA--><script>

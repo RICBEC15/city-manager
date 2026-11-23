@@ -18,7 +18,11 @@ dt = [rd(f) for f in data]
 tot = len(three) + sum(map(len, dt)) + len(js); acc = len(three); dh = ''
 for t in dt:
     acc += len(t); dh += '<script>\n%s\n</script>\n<script>bootP(%.2f)</script>\n' % (t, acc / tot * 0.85)
-out = tpl.replace('SFONDO', b64(os.path.join(g, 'sfondo-menu.jpg'))).replace('<!--BOOTIMG-->', boot).replace('bootP(THREE)', 'bootP(%.2f)' % (len(three) / tot * 0.85))
+# sfondi del menu a rotazione (sorgenti/menu/N.webp): 8 s ciascuno, dissolvenza lenta
+mimg = sorted(glob.glob(os.path.join(d, 'menu', '[0-9].webp')))
+mper = 8.0; mcyc = mper * len(mimg)
+menu = ''.join('<div class="mbg" style="background-image:url(data:image/webp;base64,%s);animation-duration:%gs;animation-delay:%gs"></div>' % (b64(p), mcyc, i * mper - 1.5) for i, p in enumerate(mimg))
+out = tpl.replace('<!--MENUIMG-->', menu).replace('<!--BOOTIMG-->', boot).replace('bootP(THREE)', 'bootP(%.2f)' % (len(three) / tot * 0.85))
 out = out.replace('/*GAME*/', js).replace('<!--DATA-->', dh).replace('/*THREE_LIB*/', three)
 open(OUT, 'w', encoding='utf-8').write(out)
 print('ok', len(out))
