@@ -6988,6 +6988,159 @@ loadBar = function (f, txt) {
   bootShow(txt + ' ' + Math.round(f * 100) + '%', f);
 };
 
+// ---------- rotellina in alto a destra: statistiche dei primi 10 minuti di gioco ----------
+// Conta solo il tempo in cui il gioco va (non in pausa, non nel menu). Legge gli stessi dati del gioco:
+// famiglie nelle case (b.occ), soldi (S.money e il bilancio mensile S.lastBudget), edifici, servizi e strade.
+// Tutto è salvato in S.st10, quindi resta anche caricando la partita.
+const ST10_DUR = 600; // secondi reali
+const st10 = { S: null, prev: new Map(), money: 0, bud: null, t: 0, tick: 0, open: false, rot: 0, rotT: 0 };
+function st10New() {
+  return { t: 0, t0: S.time, done: 0, arr: 0, left: 0, orig: {}, min: Array(10).fill(0), spent: 0, earned: 0, loans: 0, snap: null };
+}
+// da dove arrivano: le stesse strade/binari/porti che collegano la città al bordo della mappa (senza nomi di città)
+function st10Dir(dx, dz) {
+  const a = Math.atan2(dx, -dz) * 180 / Math.PI, i = Math.round(((a + 360) % 360) / 45) % 8;
+  return (LANG === 'en' ? ['north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west'] : ['nord', 'nord-est', 'est', 'sud-est', 'sud', 'sud-ovest', 'ovest', 'nord-ovest'])[i];
+}
+function st10Origins(b) {
+  const o = [];
+  const outs = outsideNodes();
+  if (outs.length) {
+    let best = null, bd = Infinity; for (const n of outs) { const d = (n.x - b.x) ** 2 + (n.z - b.z) ** 2; if (d < bd) { bd = d; best = n; } }
+    const hw = best.segs.some(id => { const s = segs.get(id); return s && RT[s.type] && RT[s.type].hw; });
+    o.push([(hw ? '🛣️ ' + L('Autostrada da ', 'Highway from the ') : '🚗 ' + L('Strada esterna da ', 'Outside road from the ')) + st10Dir(best.x - b.x, best.z - b.z), 3]);
+  }
+  const rail = typeof outsideRail === 'function' && outsideRail().length > 0;
+  for (const sv of svcs.values()) {
+    if (!sv.on) continue;
+    if (rail && (sv.type === 'train' || sv.type === 'train2')) o.push(['🚆 ' + L('Treno (ferrovia dal bordo mappa)', 'Train (railway from the map edge)'), sv.type === 'train2' ? 3 : 1.5]);
+    else if (sv.type === 'harbor') o.push(['🚢 ' + L('Nave (porto passeggeri)', 'Ship (passenger harbor)'), 1.5]);
+    else if (sv.type === 'icbus') o.push(['🚌 ' + L('Bus intercity (dall\'autostrada)', 'Intercity bus (from the highway)'), 1]);
+  }
+  if (!o.length) o.push(['🗺️ ' + L('Bordo della mappa', 'Map edge'), 1]);
+  return o;
+}
+function st10Add(b, n) {
+  const st = S.st10, o = st10Origins(b); let tot = 0; for (const x of o) tot += x[1];
+  // divido le famiglie tra i collegamenti in proporzione al peso (senza perdere nessuno)
+  let r = n; o.forEach((x, i) => { const k = i === o.length - 1 ? r : Math.min(r, Math.round(n * x[1] / tot)); r -= k; if (k > 0) st.orig[x[0]] = (st.orig[x[0]] || 0) + k; });
+  st.arr += n; st.min[Math.min(9, Math.floor(st.t / 60))] += n;
+}
+function st10Counts() {
+  const c = { R: 0, M: 0, C: 0, O: 0, I: 0, svc: 0, km: 0, pop: stats.pop || 0, jobs: stats.jobs || 0 };
+  for (const b of buildings.values()) { if (b.ruin) continue; const z = ZT[b.zone]; if (z) c[z.k]++; }
+  c.svc = svcs.size;
+  for (const s of segs.values()) if (!s.pre && RT[s.type] && !RT[s.type].rail) c.km += s.len || 0;
+  c.km /= 1000; return c;
+}
+function st10Base() { st10.prev.clear(); for (const b of buildings.values()) if (b.hh) st10.prev.set(b, b.occ || 0); }
+function st10Step(dt) {
+  if (S !== st10.S) { // partita nuova o caricata
+    st10.S = S; if (!S.st10) S.st10 = st10New();
+    st10Base(); st10.money = S.money; st10.bud = S.lastBudget; st10.loans = S.loans.length; st10.open && st10Draw();
+    return;
+  }
+  const st = S.st10, run = !menuOpen && S.speed > 0;
+  // soldi: il bilancio del mese conta per entrate e uscite intere, il resto (costruzioni, rimborsi, prestiti) per segno
+  if (!st.done) {
+    let d = S.money - st10.money;
+    if (S.lastBudget && S.lastBudget !== st10.bud) { const bg = S.lastBudget; st.earned += bg.ti || 0; st.spent += bg.te || 0; d -= bg.net || 0; }
+    if (S.loans.length > (st10.loans || 0) && d > 0) { const l = S.loans[S.loans.length - 1]; st.loans += l.amt; d -= l.amt; }
+    if (d > 0) st.earned += d; else st.spent -= d;
+  }
+  st10.money = S.money; st10.bud = S.lastBudget; st10.loans = S.loans.length;
+  if (run && !st.done) st.t += dt;
+  // famiglie arrivate / andate via: confronto le case ogni mezzo secondo
+  st10.tick += dt;
+  if (!st.done && st10.tick > 0.5) {
+    st10.tick = 0;
+    const seen = new Set();
+    for (const b of buildings.values()) {
+      if (!b.hh || b.ruin) continue; seen.add(b);
+      const o = st10.prev.get(b) || 0, n = b.occ || 0;
+      if (n > o) st10Add(b, n - o); else if (n < o) st.left += o - n;
+      st10.prev.set(b, n);
+    }
+    for (const [b, o] of st10.prev) if (!seen.has(b)) { st.left += o; st10.prev.delete(b); }
+    if (st.t >= ST10_DUR) { st.done = 1; st.t = ST10_DUR; st.snap = st10Counts(); st.days = (S.time - st.t0) / 24; toast(L('📊 Primi 10 minuti finiti: il riepilogo è nella rotellina in alto a destra', '📊 First 10 minutes over: the summary is in the dial at the top right'), 5000); }
+  }
+  st10.rotT += dt; if (st10.rotT > 3) { st10.rotT = 0; st10.rot++; }
+}
+// ---------- disegno ----------
+(function () {
+  const css = document.createElement('style');
+  css.textContent = `#st10{position:fixed;top:6px;right:10px;display:flex;align-items:center;gap:6px;cursor:pointer;z-index:30;pointer-events:auto}
+#st10 .tk{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:5px 10px;font-size:12.5px;width:200px;height:20px;line-height:20px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:right}
+#st10 .tk span{display:inline-block;animation:st10in .45s ease-out}
+@keyframes st10in{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+#st10 svg{display:block;background:var(--panel);border-radius:50%;border:1px solid var(--line)}
+#st10p{position:fixed;top:100px;right:10px;width:330px;max-height:calc(100vh - 160px);overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;font-size:13px;z-index:31;display:none}
+#st10p h3{margin:0 0 6px;font-size:16px;display:flex;justify-content:space-between;align-items:center}
+#st10p h4{margin:10px 0 4px;font-size:13px;opacity:.8}
+#st10p .row{display:flex;justify-content:space-between;margin:2px 0}
+#st10p .bar{height:6px;border-radius:3px;background:#4aa3ff;margin:1px 0 5px}
+#st10p .mins{display:flex;align-items:flex-end;gap:3px;height:46px}
+#st10p .mins div{flex:1;background:#5ec27a;border-radius:2px 2px 0 0;min-height:2px;position:relative}
+#st10p .ml{display:flex;gap:3px;font-size:10px;opacity:.7}#st10p .ml span{flex:1;text-align:center}
+#hud #top{padding-right:270px}`;
+  document.head.appendChild(css);
+  const w = document.createElement('div'); w.id = 'st10';
+  w.innerHTML = '<div class="tk" id="st10tk"></div><svg width="40" height="40" viewBox="0 0 40 40"><circle cx="20" cy="20" r="16" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="4"/><circle id="st10ring" cx="20" cy="20" r="16" fill="none" stroke="#5ec27a" stroke-width="4" stroke-linecap="round" transform="rotate(-90 20 20)" stroke-dasharray="100.5" stroke-dashoffset="100.5"/><text id="st10txt" x="20" y="24.5" text-anchor="middle" font-size="12" font-weight="700" fill="#fff">0\'</text></svg>';
+  w.onclick = () => { st10.open = !st10.open; $('st10p').style.display = st10.open ? 'block' : 'none'; if (st10.open) st10Draw(); };
+  const p = document.createElement('div'); p.id = 'st10p';
+  const hud = $('hud'); hud.appendChild(w); hud.appendChild(p);
+})();
+const st10Time = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+function st10Ppl() { return stats.hh > 0 && stats.pop > 0 ? stats.pop / stats.hh : 2.6; }
+function st10Wheel() {
+  const st = S.st10, f = st.t / ST10_DUR;
+  $('st10ring').setAttribute('stroke-dashoffset', (100.5 * (1 - f)).toFixed(1));
+  $('st10ring').setAttribute('stroke', st.done ? '#4aa3ff' : '#5ec27a');
+  $('st10txt').textContent = st.done ? '✔' : Math.floor(st.t / 60) + '\'';
+  const c = st.done ? st.snap : st10Counts(), ppl = st10Ppl();
+  const top = Object.entries(st.orig).sort((a, b) => b[1] - a[1])[0];
+  const items = [
+    '⏱️ ' + (st.done ? L('Primi 10 minuti: riepilogo', 'First 10 minutes: summary') : L('Tempo di gioco ', 'Play time ') + st10Time(st.t) + ' / 10:00'),
+    '👥 ' + L('Arrivati ', 'Arrived ') + fmtNum(st.arr * ppl) + L(' abitanti', ' residents'),
+    top ? L('Da: ', 'From: ') + top[0] : '🛣️ ' + L('Nessun arrivo ancora', 'No arrivals yet'),
+    '💸 ' + L('Spesi ', 'Spent ') + fmtMoney(st.spent),
+    '💰 ' + L('Guadagnati ', 'Earned ') + fmtMoney(st.earned),
+    `🏠 ${c.R}  🏪 ${c.C}  🏢 ${c.O}  🏭 ${c.I}`,
+  ];
+  const s = items[st10.rot % items.length], tk = $('st10tk');
+  if (tk.dataset.s !== s) { tk.dataset.s = s; tk.innerHTML = '<span></span>'; tk.firstChild.textContent = s; }
+}
+function st10Draw() {
+  if (!S || !S.st10) return;
+  const st = S.st10, c = st.done ? st.snap : st10Counts(), ppl = st10Ppl();
+  const row = (a, b) => `<div class="row"><span>${a}</span><b>${b}</b></div>`;
+  const days = st.done ? st.days : (S.time - st.t0) / 24;
+  let h = `<h3><span>📊 ${L('Primi 10 minuti', 'First 10 minutes')}</span><button class="x" onclick="document.getElementById('st10').onclick()">✕</button></h3>`;
+  h += `<div style="opacity:.75;font-size:12px">${st.done ? L('Finiti: questi sono i numeri dei primi 10 minuti.', 'Done: these are the numbers of the first 10 minutes.') : L('Il tempo conta solo quando il gioco non è in pausa.', 'Time only counts while the game is not paused.')}</div>`;
+  h += `<h4>⏱️ ${L('Tempo', 'Time')}</h4>` + row(L('Tempo di gioco', 'Play time'), st10Time(st.t) + ' / 10:00') + row(L('Tempo passato nella città', 'Time passed in the city'), Math.floor(days) + L(' giorni ', ' days ') + Math.floor((days % 1) * 24) + L(' ore', ' h'));
+  h += `<h4>👥 ${L('Abitanti', 'Residents')}</h4>` + row(L('Arrivati in città', 'Moved in'), fmtNum(st.arr * ppl) + ` <span style="opacity:.6;font-weight:400">(${fmtNum(st.arr)} ${L('famiglie', 'households')})</span>`) + row(L('Andati via', 'Moved out'), fmtNum(st.left * ppl)) + row(L('In città adesso', 'In the city now'), fmtNum(stats.pop || 0));
+  h += `<h4>🧭 ${L('Da dove arrivano', 'Where they come from')}</h4>`;
+  const og = Object.entries(st.orig).sort((a, b) => b[1] - a[1]);
+  if (!og.length) h += `<div style="opacity:.7">${L('Ancora nessuno: servono strade collegate all\'autostrada, zone residenziali, acqua ed elettricità.', 'Nobody yet: you need roads linked to the highway, residential zones, water and power.')}</div>`;
+  for (const [k, v] of og) { const pc = v / Math.max(1, st.arr); h += row(k, fmtNum(v * ppl) + ' · ' + Math.round(pc * 100) + '%') + `<div class="bar" style="width:${Math.max(2, pc * 100)}%"></div>`; }
+  const mx = Math.max(1, ...st.min);
+  h += `<h4>📈 ${L('Arrivi minuto per minuto', 'Arrivals minute by minute')}</h4><div class="mins">${st.min.map((v, i) => `<div title="${L('minuto', 'minute')} ${i + 1}: ${fmtNum(v * ppl)}" style="height:${v / mx * 100}%;${i === Math.floor(st.t / 60) && !st.done ? 'background:#e8d040' : ''}"></div>`).join('')}</div><div class="ml">${st.min.map((_, i) => `<span>${i + 1}</span>`).join('')}</div>`;
+  h += `<h4>💶 ${L('Soldi', 'Money')}</h4>` + (S.opts.unlimited ? `<div style="opacity:.7">${L('Partita con soldi illimitati: non si contano.', 'Unlimited money game: not counted.')}</div>` : row(L('Spesi', 'Spent'), `<span style="color:#ff8a7a">${fmtMoney(st.spent)}</span>`) + row(L('Guadagnati', 'Earned'), `<span style="color:#7ee08a">${fmtMoney(st.earned)}</span>`) + (st.loans ? row(L('Prestiti presi', 'Loans taken'), fmtMoney(st.loans)) : '') + row(L('Differenza', 'Difference'), fmtMoney(st.earned - st.spent)));
+  h += `<h4>🏙️ ${L('Edifici', 'Buildings')}${st.done ? L(' (al minuto 10)', ' (at minute 10)') : ''}</h4>` + row('🏠 ' + L('Case', 'Homes'), c.R) + row('🏘️ ' + L('Misti (negozi + case)', 'Mixed (shops + homes)'), c.M) + row('🏪 ' + L('Negozi', 'Shops'), c.C) + row('🏢 ' + L('Uffici', 'Offices'), c.O) + row('🏭 ' + L('Industrie', 'Industries'), c.I) + row('🏛️ ' + L('Servizi pubblici', 'Public services'), c.svc) + row('🛣️ ' + L('Strade costruite', 'Roads built'), c.km.toFixed(1).replace('.', LANG === 'en' ? '.' : ',') + ' km') + row('💼 ' + L('Posti di lavoro', 'Jobs'), fmtNum(st.done ? c.jobs : stats.jobs || 0));
+  $('st10p').innerHTML = h;
+}
+(function () {
+  let last = performance.now(), drawT = 0;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    const dt = Math.min(0.25, (now - last) / 1000); last = now;
+    if (!S) return;
+    st10Step(dt * (S.speed ? 1 : 0) || 0); // in pausa il tempo non conta
+    drawT += dt; if (drawT > 0.5) { drawT = 0; st10Wheel(); if (st10.open) st10Draw(); }
+  }
+  requestAnimationFrame(loop);
+})();
+
 </script>
 </body>
 </html>
