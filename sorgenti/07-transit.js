@@ -104,7 +104,7 @@ function computeRidership() {
     ln.riders = 0; if (!ln.ok) continue;
     const d = LK[ln.kind]; let res = 0, jobs = 0;
     const seen = new Set();
-    for (const st of lineStops(ln)) bldNear(st.x, st.z, d.catch, b => { if (seen.has(b.id)) return; seen.add(b.id); if (b.cov) b.cov.transit = Math.max(b.cov.transit, 1); res += b.hh ? b.occ * 2.6 : 0; jobs += b.jobs ? b.occ : 0; });
+    for (const st of lineStops(ln)) bldNear(st.x, st.z, d.catch, b => { if (seen.has(b.id)) return; seen.add(b.id); if (b.cov) b.cov.transit = Math.max(b.cov.transit, 1); res += b.hh ? (b.res || 0) : 0; jobs += b.wk || 0; });
     const freq = clamp(ln.nveh / Math.max(1, lineStops(ln).length * 0.5), 0.2, 1.5) * (ln.sched ? 0.85 : 1);
     const price = S.policies.freeTransit ? 1.4 : clamp(1.6 - ln.price / (d.price * 2.5), 0.3, 1.3);
     ln.riders = Math.round(Math.min(Math.sqrt(res * jobs) * 0.35 * freq * price, lineCap(ln) * ln.nveh * 3));
@@ -214,21 +214,23 @@ function spawnIntercity() {
 // ---------- pedoni (solo vicino alla telecamera) ----------
 const peds = []; const pedPool = new InstPool(boxGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), 900);
 const PED_COLS = [0xc0392b, 0x2980b9, 0x27ae60, 0xf1c40f, 0x8e44ad, 0x34495e, 0xe67e22, 0xecf0f1, 0x16a085];
+let pedT = 0;
 function updatePeds(dt) {
   const want = cam.dist < 600 || walk.on ? 700 : 0;
   const cx = walk.on ? walk.x : cam.tx, cz = walk.on ? walk.z : cam.tz;
+  // solo persone vere che stanno camminando (un pedone = un abitante, finché arriva)
   while (peds.length > want) { const p = peds.pop(); pedPool.remove(p.h.i, 'i'); }
-  let tries = 0;
-  while (peds.length < want && tries++ < 20) {
-    const ids = [...segsNear(cx + (rand() - 0.5) * 700, cz + (rand() - 0.5) * 700, 60)];
-    if (!ids.length) break; const s = segs.get(pick(ids)); if (!s || !RT[s.type].zone && !RT[s.type].ped) continue;
-    if (!s.cells.some(id => cells[id]?.b) && !RT[s.type].ped) continue;
-    const p = { seg: s.id, a: rand() * s.len, side: rand() < 0.5 ? 1 : -1, dir: rand() < 0.5 ? 1 : -1, sp: 1 + rand() * 0.6, h: { i: -1 }, col: pick(PED_COLS) };
-    p.h.i = pedPool.add(p.h); peds.push(p);
+  if (want && (pedT = (pedT || 0) + 1) % 15 === 1) {
+    const shown = new Set(peds.map(p => p.pid));
+    for (const w of popWalkersNear(cx, cz, 800, want)) {
+      if (peds.length >= want) break; if (shown.has(w.id)) continue; const o = w.ws, s = o && segs.get(o.seg); if (!s) continue;
+      const p = { pid: w.id, seg: s.id, a: clamp(o.along ?? rand() * s.len, 0, s.len), side: o.side || (rand() < 0.5 ? 1 : -1), dir: rand() < 0.5 ? 1 : -1, sp: 1 + rand() * 0.6, h: { i: -1 }, col: PED_COLS[w.id % PED_COLS.length] };
+      p.h.i = pedPool.add(p.h); peds.push(p);
+    }
   }
   for (let i = peds.length - 1; i >= 0; i--) {
-    const p = peds[i], s = segs.get(p.seg);
-    if (!s || Math.hypot(s.pts[0].x - cx, s.pts[0].z - cz) > 900) { pedPool.remove(p.h.i, 'i'); peds.splice(i, 1); continue; }
+    const p = peds[i], s = segs.get(p.seg), w = POP.p.get(p.pid);
+    if (!s || !w || w.s !== ST.VIAGGIO || w.m !== 'w' || Math.hypot(s.pts[0].x - cx, s.pts[0].z - cz) > 900) { pedPool.remove(p.h.i, 'i'); peds.splice(i, 1); continue; }
     p.a += p.dir * p.sp * dt; if (p.a < 0 || p.a > s.len) { p.dir *= -1; p.a = clamp(p.a, 0, s.len); }
     const f = segFrame(s, p.a), off = RT[s.type].w / 2 - 1;
     setInst(pedPool.mesh, p.h.i, f.x + f.nx * off * p.side, f.y + 0.15, f.z + f.nz * off * p.side, Math.atan2(f.tx * p.dir, f.tz * p.dir), 0.55, 1.7, 0.35);

@@ -198,7 +198,7 @@ function delDistrict(id) { distEach(k => { if (distGrid[k] === id) distGrid[k] =
 function districtStats(id) {
   const r = { pop: 0, hh: 0, jobs: 0, work: 0, happy: 0, nb: 0, edu: 0, lv: 0, cells: 0, svc: 0, cov: { health: 0, police: 0, fire: 0, edu1: 0, park: 0, garb: 0, transit: 0 } };
   distEach(k => { if (distGrid[k] === id) { r.cells++; r.lv += LV[k]; } });
-  for (const b of buildings.values()) { if (distGrid[gIdx(b.x, b.z)] !== id) continue; r.nb++; if (b.hh) { r.pop += b.occ * 2.6; r.hh += b.occ; r.happy += b.happy * b.occ; r.edu += (b.edu || 0) * b.occ; } else { r.jobs += b.jobs || 0; r.work += b.occ; } for (const k in r.cov) r.cov[k] += Math.min(1, b.cov?.[k] || 0); }
+  for (const b of buildings.values()) { if (distGrid[gIdx(b.x, b.z)] !== id) continue; r.nb++; if (b.hh) { r.pop += (b.res || 0); r.hh += b.occ; r.happy += b.happy * b.occ; r.edu += (b.edu || 0) * b.occ; } else { r.jobs += b.jobs || 0; r.work += b.wk || 0; } for (const k in r.cov) r.cov[k] += Math.min(1, b.cov?.[k] || 0); }
   for (const sv of svcs.values()) if (distGrid[gIdx(sv.x, sv.z)] === id) r.svc++;
   return r;
 }
@@ -339,9 +339,9 @@ function refreshPanels() {
       if (o.ruin) h += `<div style="color:var(--bad)">${L('Distrutto. Le macerie verranno tolte e si ricostruirà.', 'Destroyed. Rubble will be cleared and it will be rebuilt.')}</div>`;
       if (o.aband) h += `<div style="color:var(--bad)">${L('Abbandonato! Manca qualcosa: guarda sotto.', 'Abandoned! Something is missing: see below.')}</div>`;
       if (o.fire) h += `<div style="color:var(--bad)">🔥 ${L('Sta bruciando!', 'On fire!')}</div>`;
-      if (o.hh) h += row(L('Famiglie', 'Households'), `${o.occ} / ${o.hh}`) + row(L('Abitanti', 'Residents'), fmtNum(o.occ * 2.6));
-      if (o.jobs) { const k = z.k, pr = profitOf(o); h += row(L('Lavoratori', 'Workers'), `${o.occ} / ${o.jobs}`) + row(L('Istruzione richiesta', 'Education needed'), k === 'O' ? L('alta (laurea)', 'high (degree)') : k === 'I' ? L('bassa', 'low') : L('media', 'medium')) + row(L('Redditività', 'Profitability'), pr > 0.66 ? L('guadagna bene', 'profitable') : pr > 0.33 ? L('così così', 'break-even') : L('in perdita', 'losing money')) + bar(pr, pr > 0.5 ? 'var(--good)' : 'var(--bad)');
-        if (k === 'I') h += row(L('Produce', 'Produces'), o.spec ? RAWN()[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[o.spec]][1] + ' · ' + fmtNum(Math.round(o.occ * 1.5)) + ' t/' + L('mese', 'mo') : L('merci', 'goods') + ' · ' + fmtNum(Math.round(o.occ)) + ' ' + L('al mese', 'per month'));
+      h += popCardHTML(o); // persone vere: famiglie, abitanti, impiegati e clienti con il loro massimo
+      if (o.jobs) { const k = z.k, pr = profitOf(o); h += row(L('Istruzione richiesta', 'Education needed'), k === 'O' ? L('alta (laurea)', 'high (degree)') : k === 'I' ? L('bassa', 'low') : L('media', 'medium')) + row(L('Redditività', 'Profitability'), pr > 0.66 ? L('guadagna bene', 'profitable') : pr > 0.33 ? L('così così', 'break-even') : L('in perdita', 'losing money')) + bar(pr, pr > 0.5 ? 'var(--good)' : 'var(--bad)');
+        if (k === 'I') h += row(L('Produce', 'Produces'), o.spec ? RAWN()[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[o.spec]][1] + ' · ' + fmtNum(Math.round((o.wk || 0) * 1.5)) + ' t/' + L('mese', 'mo') : L('merci', 'goods') + ' · ' + fmtNum(Math.round(o.wk || 0)) + ' ' + L('al mese', 'per month'));
         if (k === 'C' || k === 'M') h += row(L('Vende', 'Sells'), TAXPN()[TAXP.C[o.id % TAXP.C.length]]); }
       h += row(L('Felicità', 'Happiness'), Math.round(o.happy) + '%') + bar(o.happy / 100, o.happy > 50 ? 'var(--good)' : 'var(--bad)');
       h += row('⚡ / 💧 / 🚽', `${o.pow ? '✅' : '❌'} ${o.wat ? '✅' : '❌'} ${o.sew ? '✅' : '❌'}`);
@@ -349,15 +349,6 @@ function refreshPanels() {
       if (o.hh) h += row(L('Istruzione media', 'Average education'), Math.round(o.edu * 100) + '%');
       h += row(L('Valore del terreno', 'Land value'), Math.round(LV[gIdx(o.x, o.z)]));
       h += `<div class="sec">${L('Perché sono così felici', 'Why this happiness')}</div>` + (o.fac ? facList(o.fac) : '');
-      if (o.hh && o.occ) {
-        h += `<div class="sec">${L('Chi ci vive', 'Who lives here')}</div>`;
-        const r = mulberry32(o.id * 97);
-        for (let i = 0; i < Math.min(4, o.occ); i++) {
-          const nm = NAMES_F[Math.floor(r() * NAMES_F.length)] + ' ' + NAMES_P[Math.floor(r() * NAMES_P.length)], age = 4 + Math.floor(r() * 80);
-          const job = age < 6 ? L('all\'asilo', 'at preschool') : age < 19 ? L('studente', 'student') : age > 67 ? L('in pensione', 'retired') : r() < stats.unemp ? L('cerca lavoro', 'unemployed') : pick2(r, [L('impiegato', 'office worker'), L('commessa', 'shop assistant'), L('operaio', 'factory worker'), L('infermiere', 'nurse'), L('insegnante', 'teacher'), L('autista', 'driver'), L('cuoco', 'cook'), L('programmatrice', 'programmer')]);
-          h += `<div class="row"><span>${nm}, ${age}</span><span>${job} <button title="${L('Segui', 'Follow')}" style="padding:0 5px" onclick="followCitizen(${o.id},'${nm.replace(/'/g, '')}',${age},'${job.replace(/'/g, '')}')">🎥</button></span></div>`;
-        }
-      }
       h += `<div style="margin-top:10px;display:flex;gap:6px"><button onclick="destroyBuilding(selected.obj);closeSide()">🧨 ${L('Demolisci', 'Demolish')}</button></div>`;
       selBox.visible = true; selBox.position.set(o.x, o.y, o.z); selBox.rotation.y = o.ang; selBox.scale.set(o.cw * CELL, (o.h || 8) + 3, o.cd * CELL);
     } else if (selected.kind === 'svc') {
@@ -407,15 +398,16 @@ function refreshPanels() {
   } else if (sideOpen === 'stats') {
     h += head('📊 ' + L('Statistiche', 'Statistics'));
     h += citizensHTML();
-    h += row(L('Abitanti', 'Population'), fmtNum(stats.pop)) + row(L('Famiglie', 'Households'), fmtNum(stats.hh)) + row(L('Lavoratori', 'Workforce'), fmtNum(stats.workforce)) + row(L('Posti di lavoro', 'Jobs'), fmtNum(stats.jobs)) + row(L('Pendolari da fuori', 'Commuters from outside'), fmtNum(stats.commuters || 0)) + row(L('Disoccupazione', 'Unemployment'), Math.round(stats.unemp * 100) + '%') + `<div style="font-size:12px;color:var(--mute);margin:2px 0 6px">${stats.unemp < 0.07 ? L('Sotto il 10%: servono più abitanti, aggiungi case.', 'Below 10%: you need more people, add housing.') : stats.unemp > 0.13 ? L('Sopra il 10%: servono posti di lavoro (uffici, negozi, industria).', 'Above 10%: you need jobs (offices, shops, industry).') : L('Intorno al 10%: va bene così.', 'Around 10%: that is fine.')}</div>`;
+    h += row(L('Abitanti', 'Population'), fmtNum(stats.pop)) + row(L('Famiglie', 'Households'), fmtNum(stats.hh)) + row(L('Lavoratori', 'Workforce'), fmtNum(stats.workforce)) + row(L('Posti di lavoro', 'Jobs'), fmtNum(stats.jobs)) + row(L('Pendolari da fuori', 'Commuters from outside'), fmtNum(stats.commuters || 0)) + row(L('Disoccupati', 'Unemployed'), fmtNum(POP.unemp.size)) + row(L('Disoccupazione', 'Unemployment'), Math.round(stats.unemp * 100) + '%') + `<div style="font-size:12px;color:var(--mute);margin:2px 0 6px">${stats.unemp < 0.07 ? L('Sotto il 10%: servono più abitanti, aggiungi case.', 'Below 10%: you need more people, add housing.') : stats.unemp > 0.13 ? L('Sopra il 10%: servono posti di lavoro (uffici, negozi, industria).', 'Above 10%: you need jobs (offices, shops, industry).') : L('Intorno al 10%: va bene così.', 'Around 10%: that is fine.')}</div>`;
     h += row(L('Turisti al mese', 'Tourists per month'), fmtNum(stats.tourists)) + row(L('Attrattività', 'Attractiveness'), Math.round(stats.attr)) + row(L('Passeggeri mezzi pubblici', 'Transit riders'), fmtNum(stats.riders)) + row(L('Uso dei mezzi pubblici', 'Transit share'), Math.round(stats.transitShare * 100) + '%') + row(L('Traffico (ingorghi)', 'Congestion'), Math.round(stats.congestion * 100) + '%') + row(L('Veicoli in strada', 'Vehicles on roads'), vehicles.size) + row(L('Incidenti', 'Accidents'), stats.accidents);
+    h += popWhereHTML(row);
     h += `<div class="sec">${L('Età', 'Age')}</div>` + [L('Bambini', 'Children'), L('Ragazzi', 'Teens'), L('Adulti', 'Adults'), L('Anziani', 'Seniors')].map((n, i) => row(n, Math.round(stats.ages[i] * 100) + '%')).join('') + row(L('Nascite / morti al mese', 'Births / deaths per month'), `${stats.births} / ${stats.deaths}`);
     const te = stats.edu.reduce((a, b) => a + b, 0) || 1;
     h += `<div class="sec">${L('Istruzione', 'Education')}</div>` + [L('Nessuna', 'None'), L('Elementari', 'Elementary'), L('Superiori', 'High school'), L('Università', 'University')].map((n, i) => row(n, Math.round(stats.edu[i] / te * 100) + '%')).join('');
     h += `<div class="sec">${L('Servizi', 'Utilities')}</div>` + row('⚡ ' + L('Elettricità', 'Electricity'), `${Math.round(NET.cityPow.use)} / ${Math.round(NET.cityPow.prod)} MW`) + bar(NET.cityPow.use / Math.max(1, NET.cityPow.prod), NET.cityPow.use > NET.cityPow.prod ? 'var(--bad)' : 'var(--good)') + row('💧 ' + L('Acqua', 'Water'), `${fmtNum(NET.cityWat.use)} / ${fmtNum(NET.cityWat.prod)} m³`) + bar(NET.cityWat.use / Math.max(1, NET.cityWat.prod), NET.cityWat.use > NET.cityWat.prod ? 'var(--bad)' : 'var(--good)') + row('🚽 ' + L('Fogne', 'Sewage'), `${fmtNum(NET.citySew.use)} / ${fmtNum(NET.citySew.prod)} m³`) + bar(NET.citySew.use / Math.max(1, NET.citySew.prod), NET.citySew.use > NET.citySew.prod ? 'var(--bad)' : 'var(--good)');
     h += row(L('Merci prodotte / richieste', 'Goods produced / needed'), `${fmtNum(stats.goodsP)} / ${fmtNum(stats.goodsC)}`) + row(L('Malati', 'Sick'), stats.sick) + row(L('Morti da portare via', 'Uncollected dead'), stats.dead);
     h += `<div class="sec">${L('Felicità: cosa pesa di più', 'Happiness: what matters most')}</div>` + facList(stats.fac || {});
-    if (S.districts.length) { h += `<div class="sec">${L('Quartieri', 'Districts')}</div>`; for (const d of S.districts) { let p = 0; for (const b of buildings.values()) if (b.hh && distGrid[gIdx(b.x, b.z)] === d.id) p += b.occ * 2.6; h += row(d.name, fmtNum(p) + ' ' + L('ab.', 'pop.')); } }
+    if (S.districts.length) { h += `<div class="sec">${L('Quartieri', 'Districts')}</div>`; for (const d of S.districts) { let p = 0; for (const b of buildings.values()) if (b.hh && distGrid[gIdx(b.x, b.z)] === d.id) p += (b.res || 0); h += row(d.name, fmtNum(p) + ' ' + L('ab.', 'pop.')); } }
     h += `<div class="sec">${L('Storico', 'History')}</div>` + chart();
   } else if (sideOpen === 'budget') {
     const bg = budgetNow(); h += head('💶 ' + L('Bilancio mensile', 'Monthly budget'));
@@ -518,7 +510,7 @@ function lnSet(id, k, v) { const l = lnGet(id); if (l) l[k] = v; }
 function findLine(id) { const l = lnGet(id); if (!l || !l.stops.length) return; l.hide = false; showInfo('transit'); const xs = l.stops.map(s => s.x), zs = l.stops.map(s => s.z); cam.tx = (Math.min(...xs) + Math.max(...xs)) / 2; cam.tz = (Math.min(...zs) + Math.max(...zs)) / 2; cam.dist = clamp(Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)) * 1.3, 300, 4000); redrawLines(); }
 function maxVeh(ln) { return 20 + (ln.kind === 'bus' ? 5 * [...svcs.values()].filter(s => s.type === 'busdepot' && s.ext.includes('bay')).length : 0); }
 function lineUse(ln) { return ln.off || !ln.nveh ? 0 : Math.round(ln.riders / (lineCap(ln) * ln.nveh * 0.6) * 100); }
-function profitOf(b) { const k = ZT[b.zone].k, fill = b.jobs ? b.occ / b.jobs : 0, t = taxEff(k === 'M' ? 'C' : k); return clamp(fill * 0.8 + (k === 'C' || k === 'M' ? Math.min(1, (stats.demand?.C ?? 0) / 60 + 0.4) : k === 'I' ? (stats.goodsP <= stats.goodsC ? 0.5 : 0.25) : 0.4) * 0.5 - (t - 10) / 40 + (b.level - 1) * 0.04, 0, 1); }
+function profitOf(b) { const k = ZT[b.zone].k, fill = b.jobs ? (b.wk || 0) / b.jobs : 0, t = taxEff(k === 'M' ? 'C' : k); return clamp(fill * 0.8 + (k === 'C' || k === 'M' ? Math.min(1, (stats.demand?.C ?? 0) / 60 + 0.4) : k === 'I' ? (stats.goodsP <= stats.goodsC ? 0.5 : 0.25) : 0.4) * 0.5 - (t - 10) / 40 + (b.level - 1) * 0.04, 0, 1); }
 function fireRisk(b) { return clamp((1 - (b.cov?.fire || 0)) * (ZT[b.zone].k === 'I' ? 1 : 0.6) * (UPG.has('fir1') ? 0.5 : 1), 0, 1); }
 function takeLoan(a, r, m) { S.loans.push({ amt: a, pay: Math.round(a * (1 + r) / m), left: m }); if (!S.opts.unlimited) S.money += a; refreshPanels(); toast(L('Prestito ottenuto', 'Loan taken'), 1500); }
 function buyUpg(id) { const u = UPGRADES.find(x => x.id === id); if (S.dev < u.cost) return; S.dev -= u.cost; UPG.add(id); S.upg = [...UPG]; refreshPanels(); toast('⭐ ' + u.n(), 2500); }

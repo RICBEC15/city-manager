@@ -49,7 +49,7 @@ const OFFICE_P = [['software', '💻', ['Software', 'Software']], ['telecom', '�
 const COM_P = [['lodging', '🛏️', ['Alloggio', 'Lodging']], ['meals', '🍽️', ['Pasti', 'Meals']], ['entertain', '🎭', ['Intrattenimento', 'Entertainment']], ['leisure', '🎳', ['Svago', 'Recreation']]];
 function computeChain() {
   const R = stats.raw || {}, base = { wood: R.wood?.p || 0, ore: R.ore?.p || 0, stone: R.stone?.p || 0, oil: R.oil?.p || 0, cotton: R.cotton?.p || 0, grain: (R.food?.p || 0) * 0.4, veg: (R.food?.p || 0) * 0.3, livestock: (R.food?.p || 0) * 0.3, coal: (R.ore?.p || 0) * 0.3 };
-  let fac = 0, off = 0, com = 0; for (const b of buildings.values()) { if (b.ruin || b.aband) continue; const k = ZT[b.zone].k; if (k === 'I' && !b.spec) fac += b.occ; else if (k === 'O') off += b.occ; else if (k === 'C' || k === 'M') com += b.occ; }
+  let fac = 0, off = 0, com = 0; for (const b of buildings.values()) { if (b.ruin || b.aband) continue; const k = ZT[b.zone].k; if (k === 'I' && !b.spec) fac += b.occ; else if (k === 'O') off += b.occ; else if (k === 'C' || k === 'M') com += b.wk || 0; }
   const P = { ...base }, out = {};
   const cap = fac * 0.6 * feeBiz() * specMul();
   for (const [k, ins] of CHAIN) { const have = Math.min(...ins.map(i => P[i] || 0)), need = cap / CHAIN.length; const made = Math.round(Math.min(have, need) * 0.9 + (have < need ? 0 : 0)); P[k] = made; out[k] = { p: made, n: Math.round(need), imp: Math.max(0, Math.round(need - made)) }; }
@@ -79,7 +79,7 @@ function resourcesMonth() {
   }
 }
 const _updateBuilding6b = updateBuilding;
-updateBuilding = function (b) { _updateBuilding6b(b); if (b.depleted && buildings.has(b.id) && !b.ruin) { b.occ = Math.max(0, b.occ - 1); } };
+updateBuilding = function (b) { _updateBuilding6b(b); if (b.depleted && buildings.has(b.id) && !b.ruin) popFireOne(b); };
 // ---------- ogni mese ----------
 const _monthly6 = monthly;
 monthly = function () { _monthly6(); computeChain(); resourcesMonth(); };

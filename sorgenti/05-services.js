@@ -375,7 +375,7 @@ function computeNetworks() {
   for (const b of buildings.values()) {
     if (b.ruin) continue; const s = segs.get(b.seg); if (!s) continue;
     const c = C('n' + s.a); b.net = c;
-    const z = ZT[b.zone]; const people = (b.hh ? b.occ * 2.6 : b.occ);
+    const z = ZT[b.zone]; const people = (b.hh ? (b.res || 0) : (b.wk || 0));
     const pu = (z.k === 'I' ? 0.006 : z.k === 'C' || z.k === 'O' ? 0.004 : 0.0022) * Math.max(people, 1) * policyPow * winter * (1.12 - 0.06 * (b.level || 1)) * feeCons('power');
     c.pU += pu; c.wU += people * feeCons('water'); c.sU += people * 1.0;
     b.pu = pu;
@@ -414,7 +414,7 @@ function computeCoverage() {
     if (!d.r) continue;
     const r = d.r * (0.75 + 0.25 * bud(d.cat)) * extMul(sv, 'rM');
     let load = 0; const list = [];
-    bldNear(sv.x, sv.z, r, b => { if (sv.dist && distGrid[gIdx(b.x, b.z)] !== sv.dist) return; list.push(b); load += b.hh ? b.occ * 2.6 : b.occ * 0.5; });
+    bldNear(sv.x, sv.z, r, b => { if (sv.dist && distGrid[gIdx(b.x, b.z)] !== sv.dist) return; list.push(b); load += b.hh ? (b.res || 0) : (b.wk || 0) * 0.5; });
     const capEff = d.cap ? clamp(d.cap * extMul(sv, 'capM') * bud(d.cat) / Math.max(load, 1), 0.2, 1) * (d.cat === 'health' && (sv.med ?? 100) < 10 ? 0.5 : 1) : 1;
     sv.load = load; sv.capEff = capEff;
     let full = 1;

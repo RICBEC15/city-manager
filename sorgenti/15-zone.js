@@ -84,18 +84,16 @@ updateBuilding = function (b) {
   b.rent = rent; b.rentR = ratio;
   const pen = ratio > 1 ? -Math.min(20, (ratio - 1) * 25) : 0;
   if (b.fac) b.fac.rent = pen; b.happy = clamp(b.happy + pen * 0.3, 0, 100);
-  if (ratio > 1.3 && rand() < 0.12) { b.occ--; S.homeless = (S.homeless || 0) + 2.6; }
+  if (ratio > 1.3 && rand() < 0.12) popEvictOne(b); // la famiglia non paga l'affitto: diventa senzatetto
   if (ratio < 0.8 && b.lvlT > 0) b.lvlT += 0.4; // l'affitto copre bene la manutenzione: sale prima di livello
 };
 const _ruinBuilding4 = ruinBuilding;
-ruinBuilding = function (b) { if (b.hh && b.occ) S.homeless = (S.homeless || 0) + b.occ * 2.6 * 0.5; _ruinBuilding4(b); };
+ruinBuilding = function (b) { _ruinBuilding4(b); }; // i senzatetto veri li crea popEvict
 // senzatetto: ogni mese una parte trova casa (se ci sono case libere e assistenza), gli altri vivono nei parchi
 const _monthly4 = monthly;
 monthly = function () {
   _monthly4();
-  let h = S.homeless || 0; if (!h) return;
-  const free = Math.max(0, stats.hhCap - stats.hh) * 2.6, welfare = [...svcs.values()].some(s => s.on && SV[s.type].eff === 'welfare');
-  h -= Math.min(h, free * 0.3 + (welfare ? h * 0.25 : h * 0.05)); S.homeless = Math.max(0, Math.round(h));
+  S.homeless = POP.hl; // persone vere senza casa (trovano casa in popRehome)
   drawTents();
 };
 const tentGroup = new THREE.Group(); scene.add(tentGroup);

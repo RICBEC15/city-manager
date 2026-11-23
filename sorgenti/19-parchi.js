@@ -58,7 +58,7 @@ function parkMonth() {
   const totAttr = Math.max(1, stats.attr || 1);
   for (const sv of svcs.values()) {
     const d = SV[sv.type]; if (!sv.on || !d.parea) continue; const p = parkData(sv), mods = parkMods(sv).length;
-    let near = 0; bldNear(sv.x, sv.z, d.r * 1.5, b => { if (b.hh) near += b.occ * 2.6; });
+    let near = 0; bldNear(sv.x, sv.z, d.r * 1.5, b => { if (b.hh) near += (b.res || 0); });
     const at = (d.attr + parkMods(sv).reduce((a, k) => a + PMOD[k].attr, 0)) * parkMul(sv);
     p.v = Math.round((near * 0.06 + (stats.tourists || 0) * at / totAttr * 0.5) * (1 - p.t / 30) * (0.6 + mods * 0.1) * (0.5 + parkRating(sv) / 200));
     const old = parkLevel(p); p.xp += p.v; const nl = parkLevel(p);

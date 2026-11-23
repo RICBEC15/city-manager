@@ -152,10 +152,10 @@ let lists = { res: [], job: [], com: [], ind: [], hotel: [], off: [] };
 function refreshLists() {
   lists = { res: [], job: [], com: [], ind: [], off: [] };
   for (const b of buildings.values()) {
-    if (b.ruin || b.aband || b.occ <= 0) continue; const z = ZT[b.zone].k;
-    if (b.hh) lists.res.push(b);
-    if (b.jobs) lists.job.push(b);
-    if (z === 'C' || z === 'M') lists.com.push(b);
+    if (b.ruin || b.aband || ((b.occ || 0) <= 0 && (b.wk || 0) <= 0)) continue; const z = ZT[b.zone].k;
+    if (b.hh && b.occ) lists.res.push(b);
+    if (b.jobs && b.wk) lists.job.push(b);
+    if ((z === 'C' || z === 'M') && b.wk) lists.com.push(b);
     if (z === 'I') lists.ind.push(b);
     if (z === 'O') lists.off.push(b);
   }

@@ -247,7 +247,7 @@ function updateBuilding(b) {
   if (b.cons > 0) { b.cons--; if (b.cons <= 0) { drawBuilding(b); S.bxp = (S.bxp || 0) + 3; } else return; }
   const z = ZT[b.zone], cov = b.cov || {}, k = gIdx(b.x, b.z);
   const air = AIR[k], gr = GROUND[k], no = NOIS[k], lv = LV[k];
-  const people = b.hh ? b.occ * 2.6 : b.occ;
+  const people = b.hh ? (b.res || 0) : (b.wk || 0);
   // servizi di base
   if (!b.pow) b.noPow++; else b.noPow = 0;
   if (!b.wat) b.noWat++; else b.noWat = 0;
@@ -284,20 +284,14 @@ function updateBuilding(b) {
   b.fac = f; b.happy = lerp(b.happy, clamp(h, 0, 100), 0.3);
   // abitanti e lavoratori
   if (b.aband) {
-    b.occ = 0;
+    if (b.occ || b.wk) popEvict(b, 'move');
     if (b.pow && b.wat && b.happy > 40) { b.abT = (b.abT || 0) + 1; if (b.abT > 20) { b.aband = 0; b.abT = 0; tintParts(b); } }
     return;
   }
-  if (b.hh) {
-    const free = b.hh - b.occ;
-    if (free > 0 && stats.demand.R > 10 && b.happy > 30 && rand() < 0.6) b.occ += Math.max(1, Math.round(free * 0.25 * rand()));
-    if (b.happy < 25 && b.occ > 0 && rand() < 0.3) b.occ--;
-  } else {
-    const target = Math.round(b.jobs * (stats.fillRatio || 0));
-    b.occ = b.occ < target ? Math.min(target, b.occ + Math.max(1, Math.ceil(b.jobs * 0.2))) : target;
-  }
+  // persone vere: arrivano da fuori, se ne vanno, vengono assunte (25-popolazione.js)
+  popBuilding(b);
   // abbandono
-  if (b.noPow > 60 || b.noWat > 60 || b.garb > 200 || (b.happy < 10 && b.occ > 0 && rand() < 0.1)) { b.aband = 1; b.occ = 0; tintParts(b, 0x5a524a); addFeed('aband', b); return; }
+  if (b.noPow > 60 || b.noWat > 60 || b.garb > 200 || (b.happy < 10 && b.occ > 0 && rand() < 0.1)) { popEvict(b, 'move'); b.aband = 1; b.occ = 0; tintParts(b, 0x5a524a); addFeed('aband', b); return; }
   // salita di livello
   const maxL = { 1: 5, 2: 5, 3: 5, 4: 3, 10: 5, 5: 3, 6: 5, 7: 5, 8: 3, 9: 1, 11: 3 }[zl(b.zone)];
   const score = lv * 0.6 + b.happy * 0.5 + (b.hh ? b.edu * 20 : 0) + (cov.park || 0);
@@ -330,7 +324,7 @@ function updateFires() {
     if (b.fire > 3) { burning.delete(b); b.fire = 0; ruinBuilding(b); }
   }
 }
-function ruinBuilding(b) { b.ruin = 1; b.occ = 0; b.ruinT = 0; drawBuilding(b); }
+function ruinBuilding(b) { popEvict(b, 'ruin'); b.ruin = 1; b.occ = 0; b.ruinT = 0; drawBuilding(b); }
 const firePts = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({ color: 0xff7a20, size: 9, transparent: true, opacity: 0.9, depthWrite: false }));
 firePts.frustumCulled = false; scene.add(firePts);
 function drawFires() {
@@ -421,37 +415,37 @@ function computeGrids() {
 }
 // ---------- statistiche e domanda ----------
 function computeStats() {
-  let pop = 0, hh = 0, hhCap = 0, jobs = 0, jobsC = 0, jobsI = 0, jobsO = 0, happyS = 0, happyN = 0, sick = 0, dead = 0, crime = 0, garb = 0, eduS = 0, edu = [0, 0, 0, 0], prodI = 0, lvS = 0;
+  let filled = 0, pop = 0, hh = 0, hhCap = 0, jobs = 0, jobsC = 0, jobsI = 0, jobsO = 0, happyS = 0, happyN = 0, sick = 0, dead = 0, crime = 0, garb = 0, eduS = 0, edu = [0, 0, 0, 0], prodI = 0, lvS = 0;
   const fac = {};
   for (const b of buildings.values()) {
     if (b.ruin) continue;
     if (b.hh) {
-      const p = b.occ * 2.6; pop += p; hh += b.occ; if (!b.aband) hhCap += b.hh;
+      const p = b.res || 0; pop += p; hh += b.occ; if (!b.aband) hhCap += b.hh;
       const e = b.edu; edu[e < 0.25 ? 0 : e < 0.5 ? 1 : e < 0.75 ? 2 : 3] += p; eduS += e * p;
       happyS += b.happy * p; happyN += p; sick += b.sick; dead += b.dead;
       if (b.fac) for (const k in b.fac) fac[k] = (fac[k] || 0) + b.fac[k] * p;
       lvS += LV[gIdx(b.x, b.z)] * p;
     }
-    if (b.jobs && !b.aband) { jobs += b.jobs; const k = ZT[b.zone].k; if (k === 'C' || k === 'M') jobsC += b.jobs; if (k === 'I') { jobsI += b.jobs; prodI += b.occ * (b.spec ? 1.3 : 1) * (S.policies.heavy ? 0.95 : 1) * (S.policies.curfew ? 0.92 : 1); } if (k === 'O') jobsO += b.jobs; }
+    if (b.jobs && !b.aband) { filled += b.wk || 0; jobs += b.jobs; const k = ZT[b.zone].k; if (k === 'C' || k === 'M') jobsC += b.jobs; if (k === 'I') { jobsI += b.jobs; prodI += b.occ * (b.spec ? 1.3 : 1) * (S.policies.heavy ? 0.95 : 1) * (S.policies.curfew ? 0.92 : 1); } if (k === 'O') jobsO += b.jobs; }
     crime += b.crime; garb += b.garb;
   }
   // industria specializzata: materie prime prodotte e richieste dall'industria
   const raw = {}; for (const k of RAWK) raw[k] = { p: 0, n: 0 };
-  for (const sv of svcs.values()) { const d = SV[sv.type]; if (!d.spec || !sv.on) continue; jobs += d.jobs; jobsI += d.jobs; sv.prod = Math.round(160 * clamp(sv.res ?? 0.5, 0, 1) * clamp(S.budget.spec / 100, 0.5, 1.5) * (0.6 + 0.4 * (stats.fillRatio ?? 1))); raw[d.spec.prod].p += sv.prod; }
+  for (const sv of svcs.values()) { const d = SV[sv.type]; if (!d.spec || !sv.on) continue; jobs += d.jobs; jobsI += d.jobs; jobFill(sv, -sv.id); filled += sv.wk || 0; sv.prod = Math.round(160 * clamp(sv.res ?? 0.5, 0, 1) * clamp(S.budget.spec / 100, 0.5, 1.5) * (0.6 + 0.4 * (sv.wk || 0) / Math.max(1, d.jobs))); raw[d.spec.prod].p += sv.prod; }
   for (const b of buildings.values()) if (b.spec && !b.ruin && !b.aband) raw[{ farm: 'food', forest: 'wood', oil: 'oil', ore: 'ore' }[b.spec]].p += b.occ * 1.5;
   for (const k of RAWK) raw[k].n = Math.round(prodI * RAWSH[k] * 0.8 + (k === 'food' ? pop * 0.03 : 0)); stats.raw = raw;
   const n = Math.max(1, buildings.size);
-  stats.pop = Math.round(pop); stats.hh = hh; stats.hhCap = hhCap; stats.jobs = jobs; stats.jobsC = jobsC; stats.jobsI = jobsI; stats.jobsO = jobsO;
+  stats.pop = Math.round(pop) + POP.hl; stats.hh = hh; stats.hhCap = hhCap; stats.jobs = jobs; stats.jobsC = jobsC; stats.jobsI = jobsI; stats.jobsO = jobsO;
   stats.happy = happyN ? happyS / happyN : 60; stats.sick = sick; stats.dead = dead; stats.crime = crime / n; stats.garb = garb;
   stats.eduAvg = pop ? eduS / pop : 0; stats.edu = edu; stats.lv = pop ? lvS / pop : 0;
   for (const k in fac) fac[k] /= Math.max(1, happyN); stats.fac = fac;
-  stats.workforce = pop * 0.6;
+  // lavoratori veri: adulti che abitano qui, pendolari veri da fuori, disoccupati veri
+  stats.workforce = POP.adults;
   const outside = outsideNodes().length > 0;
-  const commuters = outside ? Math.min(jobs * 0.35, 150 + pop * 0.15) : 0;
-  stats.commuters = commuters;
-  stats.fillRatio = jobs > 0 ? clamp((stats.workforce * 0.97 + commuters) / jobs, 0, 1) : 1;
-  stats.filled = Math.min(jobs, stats.workforce * 0.97 + commuters);
-  stats.unemp = stats.workforce > 0 ? clamp(1 - Math.min(jobs, stats.workforce * 0.97) / stats.workforce, 0.02, 1) : 0;
+  stats.commuters = POP.comm;
+  stats.fillRatio = jobs > 0 ? clamp(filled / jobs, 0, 1) : 1;
+  stats.filled = filled;
+  stats.unemp = POP.adults > 0 ? clamp(POP.unemp.size / POP.adults, 0, 1) : 0;
   stats.goodsP = prodI; stats.goodsC = jobsC * 0.7 + pop * 0.04;
   let cong = 0, ce = 0; for (const e of activeEdges) { if (e.rail || !e.lanes) continue; const c = e.cars.reduce((a, l) => a + l.length, 0) / (e.lanes * Math.max(e.len, 20) / 7); cong += clamp(c, 0, 1); ce++; }
   stats.congestion = ce ? cong / ce : 0;
@@ -461,9 +455,8 @@ function computeStats() {
   stats.attr = attr;
   stats.tourists = Math.round(attr * 35 * (UPG.has('tour1') ? 1.25 : 1) * (outside ? 1 : 0.2) * (0.6 + stats.happy / 100)) + stats.cruise * 450 + (stats.icbM || 0) * 40;
   // età (lenta)
-  const a = stats.ages, bt = 0.0004 * (stats.happy / 60), dt = 0.0003;
-  a[0] += bt - a[0] * 0.002; a[1] += a[0] * 0.002 - a[1] * 0.004; a[2] += a[1] * 0.004 - a[2] * 0.0008 + (stats.demand.R > 50 ? 0.0002 : 0); a[3] += a[2] * 0.0008 - dt;
-  const sa = a.reduce((x, y) => x + y, 0); for (let i = 0; i < 4; i++) a[i] = clamp(a[i] / sa, 0.03, 0.8);
+  // età vere degli abitanti (bambini <13, ragazzi <18, adulti <65, anziani)
+  { const g = POP.ages, n = g[0] + g[1] + g[2] + g[3]; if (n) stats.ages = g.map(x => x / n); }
 }
 function computeDemand() {
   const p = stats.pop, d = stats.demand, t = { R: S.tax.R, C: taxEff('C'), I: taxEff('I'), O: S.tax.O };
@@ -492,8 +485,8 @@ function budgetNow() {
   const eco = UPG.has('eco1') ? 1.1 : 1;
   for (const b of buildings.values()) {
     if (b.ruin || b.aband) continue; const k = ZT[b.zone].k, lm = 0.8 + 0.2 * b.level;
-    if (b.hh) rTax += b.occ * 2.6 * 1.25 * lm * (ZT[b.zone].cheap ? 0.6 : 1) * rTaxFor(b);
-    if (b.jobs) { const w = b.occ * lm; if (k === 'C' || k === 'M') cTax += w * 1.7; else if (k === 'I') iTax += w * (b.spec ? 1.7 : 1.4); else if (k === 'O') oTax += w * 2.3; }
+    if (b.hh) rTax += (b.res || 0) * 1.25 * lm * (ZT[b.zone].cheap ? 0.6 : 1) * rTaxFor(b);
+    if (b.jobs) { const w = (b.wk || 0) * lm; if (k === 'C' || k === 'M') cTax += w * 1.7; else if (k === 'I') iTax += w * (b.spec ? 1.7 : 1.4); else if (k === 'O') oTax += w * 2.3; }
   }
   inc.res = rTax; inc.com = cTax * taxEff('C') * eco; inc.ind = iTax * taxEff('I') * eco; inc.off = oTax * S.tax.O * eco;
   inc.tour = stats.tourists * 2.5;
@@ -527,9 +520,8 @@ function monthly() {
   for (const l of S.loans) l.left--; S.loans = S.loans.filter(l => l.left > 0);
   S.hist.push({ t: Math.floor(S.time / 24), pop: stats.pop, money: Math.round(S.money), inc: Math.round(bg.ti), exp: Math.round(bg.te), happy: Math.round(stats.happy), unemp: Math.round(stats.unemp * 100), tour: stats.tourists, jobs: stats.jobs });
   if (S.hist.length > 120) S.hist.shift();
-  stats.births = Math.round(stats.pop * 0.011 * stats.happy / 60); stats.deaths = Math.round(stats.pop * 0.007 + stats.sick * 0.05);
-  // i morti restano nelle case finché non arriva il carro funebre
-  for (let i = 0; i < stats.deaths && lists.res.length; i++) { const b = pick(lists.res); b.dead++; }
+  // nascite e morti vere (i morti restano nelle case finché non arriva il carro funebre)
+  popMonth();
   { const dp = stats.pop - (S.lastPopXP ?? stats.pop); if (dp > 0) { S.maxPop = Math.max(S.maxPop || 0, stats.pop); xpMsg('+' + fmtNum(dp) + ' XP ' + L('popolazione aumentata', 'population grew')); }
     const hp = Math.round(stats.happy), dh = hp - (S.maxHappyXP ?? hp); if (dh > 0) addXP(dh * 20, L('felicità dei cittadini aumentata', 'citizens happier'));
     S.lastPopXP = stats.pop; S.maxHappyXP = Math.max(S.maxHappyXP ?? hp, hp); }
@@ -654,7 +646,7 @@ function rollDisaster(force) {
   else { const c = ownedCenter(); disasterMsg(L('☄️ Meteorite!', '☄️ Meteor strike!'), c.x, c.z); shake.t = 4; let n = 0; bldNear(c.x, c.z, 180, b => { ruinBuilding(b); n++; }); clearTrees(() => true, c.x, c.z, 200); casualties(n * 5, c.x, c.z); }
 }
 function disasterMsg(t, x, z) { toast(t + (warned(x, z) ? L(' La sirena ha avvisato i cittadini.', ' The siren warned citizens.') : ''), 8000); addFeed('disaster'); }
-function casualties(n, x, z) { const k = (1 - shelterSave()) * (warned(x, z) ? 0.4 : 1); const c = Math.round(n * k); S.casualties += c; for (let i = 0; i < c && lists.res.length; i++) pick(lists.res).dead++; }
+function casualties(n, x, z) { const k = (1 - shelterSave()) * (warned(x, z) ? 0.4 : 1); const c = Math.round(n * k); S.casualties += c; for (let i = 0, t = 0; i < c && lists.res.length && t < c * 4; t++) if (popKillIn(pick(lists.res))) i++; }
 function lightning() { const c = ownedCenter(); let best = null; bldNear(c.x, c.z, 300, b => { if (!best || b.h > best.h) best = b; }); if (best && rand() < 0.5) startFire(best); flash = 1; }
 let flash = 0;
 function updateDisasters(dt) {

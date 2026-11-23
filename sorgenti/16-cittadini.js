@@ -19,9 +19,9 @@ function citizensMonth() {
   // condizioni dei cittadini
   const hc = (() => { let s = 0, n = 0; for (const b of buildings.values()) if (b.hh && b.cov) { s += Math.min(1, b.cov.health || 0); n++; } return n ? s / n : 0; })();
   let unhappy = 0, trapped = 0, danger = 0;
-  for (const b of buildings.values()) { if (!b.hh || !b.occ) continue; if (b.happy < 30) unhappy += b.occ * 2.6; if (b.fire) trapped += b.occ * 0.3; }
-  for (const f of forestFires) bldNear(f.x, f.z, f.r + 300, b => { if (b.hh) danger += b.occ * 2.6; });
-  if (typeof tornados !== 'undefined') for (const t of tornados) bldNear(t.x, t.z, 600, b => { if (b.hh) danger += b.occ * 2.6; });
+  for (const b of buildings.values()) { if (!b.hh || !b.occ) continue; if (b.happy < 30) unhappy += (b.res || 0); if (b.fire) trapped += b.occ * 0.3; }
+  for (const f of forestFires) bldNear(f.x, f.z, f.r + 300, b => { if (b.hh) danger += (b.res || 0); });
+  if (typeof tornados !== 'undefined') for (const t of tornados) bldNear(t.x, t.z, 600, b => { if (b.hh) danger += (b.res || 0); });
   stats.cond = { sick: stats.sick || 0, injured: Math.round(stats.injured || 0), weak: Math.round(pop * a[3] * 0.25 * (1 - hc)), unhappy: Math.round(unhappy), danger: Math.round(danger), trapped: Math.round(trapped), evac: Math.round(stats.evacM || 0) };
   stats.injured = (stats.injured || 0) * 0.5; stats.evacM = 0;
   // gite fuori città e studenti
@@ -134,4 +134,4 @@ function citizensHTML() {
 }
 // gli evacuati contano nelle condizioni
 const _evacuate5 = evacuate;
-evacuate = function (x, z) { _evacuate5(x, z); let n = 0; bldNear(x, z, 2000, b => { if (b.hh) n += b.occ * 2.6; }); if ([...svcs.values()].some(s => s.on && SV[s.type].shel)) stats.evacM = (stats.evacM || 0) + Math.round(n * 0.5); };
+evacuate = function (x, z) { _evacuate5(x, z); let n = 0; bldNear(x, z, 2000, b => { if (b.hh) n += (b.res || 0); }); if ([...svcs.values()].some(s => s.on && SV[s.type].shel)) stats.evacM = (stats.evacM || 0) + Math.round(n * 0.5); };
