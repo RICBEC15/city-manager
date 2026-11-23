@@ -102,6 +102,7 @@ function famLeave(f) {
   for (const id of [...f.m]) { const p = POP.p.get(id); if (p) popDel(p); }
   if (POP.f.has(f.id)) POP.f.delete(f.id);
   flowAdd('out', 'partiti', n);
+  if (typeof st10LeftReal === 'function') st10LeftReal(n);
 }
 const homeFree = b => b && b.hh && !b.aband && !b.ruin && !(b.cons > 0) && b.occ + (b.resv || 0) < b.hh;
 function freeHome(x, z, not) {
@@ -127,7 +128,7 @@ function popEvict(b, mode) {
 function popEvictOne(b) { if (!b.fams || !b.fams.size) return; const f = POP.f.get([...b.fams][0]); if (f) famOut(f); }
 function popFireOne(b) { if (!b.wl || !b.wl.size) return; const p = POP.p.get([...b.wl][0]); if (p) popFire(p); }
 // morte vera: la persona sparisce e il corpo resta in casa finché arriva il carro funebre
-function popDie(p) { const b = p.h > 0 ? buildings.get(p.h) : null; if (b) b.dead++; popDel(p); flowAdd('out', 'morti', 1); }
+function popDie(p) { const b = p.h > 0 ? buildings.get(p.h) : null; if (b) b.dead++; popDel(p); flowAdd('out', 'morti', 1); if (typeof st10LeftReal === 'function') st10LeftReal(1); }
 function popKillIn(b) { if (!b || !b.fams || !b.fams.size) return false; const f = POP.f.get([...b.fams][Math.floor(rand() * b.fams.size)]); if (!f || !f.m.length) return false; const p = POP.p.get(pick(f.m)); if (!p) return false; popDie(p); return true; }
 
 // ---------- arrivi in città ----------
@@ -162,6 +163,7 @@ function popSettle(a) {
   for (let i = 0; i < room; i++) popNew(f, NOHOME, a.ages[i]);
   famIn(f, b);
   flowAdd('in', a.or, room);
+  if (typeof st10Real === 'function') st10Real(b, room, a.or);
 }
 
 // ---------- ogni edificio: chi arriva, chi se ne va, chi viene assunto ----------
@@ -272,7 +274,7 @@ function popMonth() {
   for (const f of POP.f.values()) {
     if (f.h <= 0 || f.m.length >= 5) continue; const b = buildings.get(f.h); if (!b || b.res >= b.cap) continue;
     let par = 0; for (const id of f.m) { const p = POP.p.get(id); if (p && p.a >= 20 && p.a < 43) par++; }
-    if (par && rand() < 0.03 * par * hp) { const p = popNew(f, b.id, 0); b.res++; births++; flowAdd('in', 'nati', 1); }
+    if (par && rand() < 0.03 * par * hp) { popNew(f, b.id, 0); b.res++; births++; flowAdd('in', 'nati', 1); if (typeof st10Real === 'function') st10Real(b, 1, 'nati'); }
   }
   stats.births = births; stats.deaths = deaths;
   popRehome();

@@ -5,7 +5,7 @@
 const ST10_DUR = 600; // secondi reali
 const st10 = { S: null, prev: new Map(), money: 0, bud: null, t: 0, tick: 0, open: false, rot: 0, rotT: 0 };
 function st10New() {
-  return { t: 0, t0: S.time, done: 0, arr: 0, left: 0, orig: {}, min: Array(10).fill(0), spent: 0, earned: 0, loans: 0, snap: null };
+  return { real: 1, arrF: 0, t: 0, t0: S.time, done: 0, arr: 0, left: 0, orig: {}, min: Array(10).fill(0), spent: 0, earned: 0, loans: 0, snap: null };
 }
 // da dove arrivano: le stesse strade/binari/porti che collegano la città al bordo della mappa (senza nomi di città)
 function st10Dir(dx, dz) {
@@ -36,6 +36,17 @@ function st10Add(b, n) {
   let r = n; o.forEach((x, i) => { const k = i === o.length - 1 ? r : Math.min(r, Math.round(n * x[1] / tot)); r -= k; if (k > 0) st.orig[x[0]] = (st.orig[x[0]] || 0) + k; });
   st.arr += n; st.min[Math.min(9, Math.floor(st.t / 60))] += n;
 }
+// arrivi veri (25-popolazione.js): persone esatte e il collegamento da cui sono davvero entrate
+function st10Real(b, n, or) {
+  const st = S && S.st10; if (!st || !st.real || st.done) return;
+  let k;
+  if (or === 'treno') k = '🚆 ' + L('Treno (ferrovia dal bordo mappa)', 'Train (railway from the map edge)');
+  else if (or === 'nave') k = '🚢 ' + L('Nave (porto passeggeri)', 'Ship (passenger harbor)');
+  else if (or === 'nati') k = '👶 ' + L('Nati in città', 'Born in the city');
+  else k = st10Origins(b)[0][0];
+  st.orig[k] = (st.orig[k] || 0) + n; st.arr += n; if (or !== 'nati') st.arrF++; st.min[Math.min(9, Math.floor(st.t / 60))] += n;
+}
+function st10LeftReal(n) { const st = S && S.st10; if (st && st.real && !st.done) st.left += n; }
 function st10Counts() {
   const c = { R: 0, M: 0, C: 0, O: 0, I: 0, svc: 0, km: 0, pop: stats.pop || 0, jobs: stats.jobs || 0 };
   for (const b of buildings.values()) { if (b.ruin) continue; const z = ZT[b.zone]; if (z) c[z.k]++; }
@@ -65,13 +76,13 @@ function st10Step(dt) {
   if (!st.done && st10.tick > 0.5) {
     st10.tick = 0;
     const seen = new Set();
-    for (const b of buildings.values()) {
+    if (!st.real) for (const b of buildings.values()) {
       if (!b.hh || b.ruin) continue; seen.add(b);
       const o = st10.prev.get(b) || 0, n = b.occ || 0;
       if (n > o) st10Add(b, n - o); else if (n < o) st.left += o - n;
       st10.prev.set(b, n);
     }
-    for (const [b, o] of st10.prev) if (!seen.has(b)) { st.left += o; st10.prev.delete(b); }
+    if (!st.real) for (const [b, o] of st10.prev) if (!seen.has(b)) { st.left += o; st10.prev.delete(b); }
     if (st.t >= ST10_DUR) { st.done = 1; st.t = ST10_DUR; st.snap = st10Counts(); st.days = (S.time - st.t0) / 24; toast(L('📊 Primi 10 minuti finiti: il riepilogo è nella rotellina in alto a destra', '📊 First 10 minutes over: the summary is in the dial at the top right'), 5000); }
   }
   st10.rotT += dt; if (st10.rotT > 3) { st10.rotT = 0; st10.rot++; }
@@ -101,7 +112,7 @@ function st10Step(dt) {
   const hud = $('hud'); hud.appendChild(w); hud.appendChild(p);
 })();
 const st10Time = t => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
-function st10Ppl() { return stats.hh > 0 && stats.pop > 0 ? stats.pop / stats.hh : 2.6; }
+function st10Ppl() { if (S && S.st10 && S.st10.real) return 1; return stats.hh > 0 && stats.pop > 0 ? stats.pop / stats.hh : 2.6; }
 function st10Wheel() {
   const st = S.st10, f = st.t / ST10_DUR;
   $('st10ring').setAttribute('stroke-dashoffset', (100.5 * (1 - f)).toFixed(1));
@@ -128,7 +139,7 @@ function st10Draw() {
   let h = `<h3><span>📊 ${L('Primi 10 minuti', 'First 10 minutes')}</span><button class="x" onclick="document.getElementById('st10').onclick()">✕</button></h3>`;
   h += `<div style="opacity:.75;font-size:12px">${st.done ? L('Finiti: questi sono i numeri dei primi 10 minuti.', 'Done: these are the numbers of the first 10 minutes.') : L('Il tempo conta solo quando il gioco non è in pausa.', 'Time only counts while the game is not paused.')}</div>`;
   h += `<h4>⏱️ ${L('Tempo', 'Time')}</h4>` + row(L('Tempo di gioco', 'Play time'), st10Time(st.t) + ' / 10:00') + row(L('Tempo passato nella città', 'Time passed in the city'), Math.floor(days) + L(' giorni ', ' days ') + Math.floor((days % 1) * 24) + L(' ore', ' h'));
-  h += `<h4>👥 ${L('Abitanti', 'Residents')}</h4>` + row(L('Arrivati in città', 'Moved in'), fmtNum(st.arr * ppl) + ` <span style="opacity:.6;font-weight:400">(${fmtNum(st.arr)} ${L('famiglie', 'households')})</span>`) + row(L('Andati via', 'Moved out'), fmtNum(st.left * ppl)) + row(L('In città adesso', 'In the city now'), fmtNum(stats.pop || 0));
+  h += `<h4>👥 ${L('Abitanti', 'Residents')}</h4>` + row(L('Arrivati in città', 'Moved in'), fmtNum(st.arr * ppl) + ` <span style="opacity:.6;font-weight:400">(${fmtNum(st.real ? st.arrF : st.arr)} ${L('famiglie', 'households')})</span>`) + row(L('Andati via', 'Moved out'), fmtNum(st.left * ppl)) + row(L('In città adesso', 'In the city now'), fmtNum(stats.pop || 0));
   h += `<h4>🧭 ${L('Da dove arrivano', 'Where they come from')}</h4>`;
   const og = Object.entries(st.orig).sort((a, b) => b[1] - a[1]);
   if (!og.length) h += `<div style="opacity:.7">${L('Ancora nessuno: servono strade collegate all\'autostrada, zone residenziali, acqua ed elettricità.', 'Nobody yet: you need roads linked to the highway, residential zones, water and power.')}</div>`;
