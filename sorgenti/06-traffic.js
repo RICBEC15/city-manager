@@ -35,7 +35,7 @@ function spawnVehicle(kind, legs, opts = {}) {
   e.cars[v.lane].push(v); activeEdges.add(e);
   v.hb = { i: -1 }; v.hb.i = vBody.add(v.hb);
   if (k.top) { v.ht = { i: -1 }; v.ht.i = vTop.add(v.ht); }
-  if (kind === 'train' || kind === 'cargotrain') { v.cars = []; for (let i = 0; i < (opts.ncars || 4); i++) { const h = { i: -1 }; h.i = vBody.add(h); v.cars.push(h); } }
+  if (VK[kind].rail) { v.cars = []; for (let i = 0; i < (opts.ncars || 4); i++) { const h = { i: -1 }; h.i = vBody.add(h); v.cars.push(h); } }
   vehicles.add(v);
   return v;
 }
@@ -61,6 +61,7 @@ function edgePos(e, s, lane, v) {
 function canEnter(e2, lane, need) { const ln = e2.cars[lane]; let m = 1e9; for (const o of ln) if (o.s < m) m = o.s - o.l; return m > need; }
 function bestLane(e2) { let best = 0, bs = -1e9; for (let k = 0; k < e2.cars.length; k++) { let m = 1e9; for (const o of e2.cars[k]) m = Math.min(m, o.s - o.l); m += rand() * 4; if (m > bs) { bs = m; best = k; } } return best; }
 
+function onEdgeEnter(v, e) { } // caselli: 30-mod-trasporti.js
 function bestLaneV(v, e2) { return bestLane(e2); } // le regole delle corsie stanno in 29-mod-strade.js
 function updateVehicles(dt) {
   if (dt <= 0) return;
@@ -103,7 +104,7 @@ function updateVehicles(dt) {
           if (nl.e.dead) { despawnVehicle(v); i--; continue; }
           ln.splice(i, 1); i--;
           v.li++; v.s = nl.s0 + (v.s - leg.s1); v.lane = Math.min(lane, nl.e.cars.length - 1); v.pi = 0; v.nextLane = null;
-          nl.e.cars[v.lane].push(v); activeEdges.add(nl.e); nl.e.flow++;
+          nl.e.cars[v.lane].push(v); activeEdges.add(nl.e); nl.e.flow++; if (nl.e.seg.toll) onEdgeEnter(v, nl.e);
         }
         if (v.stuck > 70 && !k.rail && v.kind !== 'bus' && v.kind !== 'tram') { despawnVehicle(v); i--; continue; }
         if (v.stuck > 140) { despawnVehicle(v); i--; continue; }

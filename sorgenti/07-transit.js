@@ -202,7 +202,7 @@ function spawnPlane(sv) { const h = { i: extra.add(null) }, h2 = { i: extra.add(
 function outsideRail() { return [...nodes.values()].filter(n => n.outside && n.rail && n.segs.length); }
 function spawnIntercity() {
   const outs = outsideRail(); if (!outs.length) return;
-  const st = [...svcs.values()].filter(s => s.on && (s.type === 'train' || s.type === 'cargotrain') && segs.get(s.seg));
+  const st = [...svcs.values()].filter(s => s.on && (s.type === 'train' || s.type === 'cargotrain' || SV[s.type].bigTrain) && segs.get(s.seg));
   if (!st.length) return;
   const sv = pick(st), o = pick(outs), gl = gateLeg(o); if (!gl) return; const os = gl.seg, oa = gl.along;
   const legs = findPath(os, oa, segs.get(sv.seg), sv.along, 'rail'); if (!legs) return;
