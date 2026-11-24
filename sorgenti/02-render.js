@@ -78,9 +78,13 @@ function terrColorAt(i, j, out) {
   if (h < WATER - 0.5) { r = 0.55; g = 0.52; b = 0.42; }
   else if (h < 2.5 && !(ROADM[k] && H0[k] >= 2.5)) { r = 0.78; g = 0.72; b = 0.55; } // spiaggia (non dove una strada ha solo abbassato un prato)
   else { r = 0.36 + v * 0.1; g = 0.52 + v * 0.12; b = 0.25 + v * 0.05; const dry = smooth(80, 260, h); r = lerp(r, 0.47, dry * 0.5); g = lerp(g, 0.5, dry * 0.4); }
-  const rock = Math.max(smooth(0.82, 0.62, ny), smooth(380, 560, h) * 0.8);
+  if (h >= 2.5) {
+    if (TFX.sand) { const s = TFX.sand(x, z); if (s > 0) { r = lerp(r, 0.83 + v * 0.05, s); g = lerp(g, 0.72 + v * 0.05, s); b = lerp(b, 0.5, s); } }
+    if (TFX.tundra) { const t = TFX.tundra * 0.65; r = lerp(r, 0.5 + v * 0.1, t); g = lerp(g, 0.5 + v * 0.06, t); b = lerp(b, 0.33, t); }
+  }
+  const rock = Math.max(smooth(0.82, 0.62, ny), smooth(TFX.rock, TFX.rock + 180, h) * 0.8);
   r = lerp(r, 0.5, rock); g = lerp(g, 0.47, rock); b = lerp(b, 0.43, rock);
-  const snow = smooth(600, 700, h + v * 60) * smooth(0.6, 0.85, ny);
+  const snow = smooth(TFX.snow, TFX.snow + 100, h + v * 60) * smooth(0.6, 0.85, ny);
   r = lerp(r, 0.95, snow); g = lerp(g, 0.96, snow); b = lerp(b, 0.98, snow);
   out[0] = x; out[1] = h; out[2] = z; out[3] = nx; out[4] = ny; out[5] = nz; out[6] = r; out[7] = g; out[8] = b;
 }

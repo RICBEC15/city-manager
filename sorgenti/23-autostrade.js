@@ -219,7 +219,7 @@ function startPick() {
   terrU.uTileShow.value = 0.9;
   const c = startCenter(); cam.tx = c.x; cam.tz = c.z; cam.dist = 30000; cam.pitch = 1.42;
   if (MAPH[MAPID] && RHW.ready) rhwDrawRest(RHW.city[MAPID], new Set(), true);
-  toast(L('Scegli dove nasce la tua città: clicca una casella sulla mappa (avrai le 3 x 3 caselle intorno).', 'Choose where your city starts: click a tile on the map (you get the 3 x 3 tiles around it).') + (MAPH[MAPID] ? ' ' + L('Le strisce arancioni sono le autostrade vere.', 'The orange stripes are the real highways.') : ''), 12000);
+  toast(L('Scegli dove nasce la tua città: clicca una casella sulla mappa (avrai le 3 x 3 caselle intorno).', 'Choose where your city starts: click a tile on the map (you get the 3 x 3 tiles around it).') + (MAPH[MAPID] && RHW.city[MAPID] ? ' ' + L('Le strisce arancioni sono le autostrade vere.', 'The orange stripes are the real highways.') : ''), 12000);
 }
 let PICKC = null;
 function pickInfo(g) {

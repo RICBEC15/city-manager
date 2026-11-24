@@ -13,12 +13,13 @@ function prevLand(h) {
 }
 // griglia di altezze (n x n) su un quadrato di lato 'size' metri centrato in (0,0)
 function prevGrid(mapId, seed, size, n) {
-  const real = MAPH[mapId], wreal = MAPH['w_' + mapId], h = new Float32Array(n * n), half = size / 2;
+  const real = MAPH[mapId], wreal = MAPH['w_' + mapId], mreal = MAPH['m_' + mapId], mo = MAPS[mapId]?.mid, MH = (CN - 1) * HC / 2, h = new Float32Array(n * n), half = size / 2;
   if (wreal || real) {
     // mappe delle città: dati veri (al centro quelli precisi da 20 m, fuori quelli da 160 m)
     for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
       const x = -half + (i + 0.5) * size / n, z = -half + (j + 0.5) * size / n;
       if (real && Math.abs(x) < OHALF && Math.abs(z) < OHALF) h[j * n + i] = real[Math.round((z + OHALF) / OHC) * OHN + Math.round((x + OHALF) / OHC)];
+      else if (mreal && mo && Math.abs(x - mo[0]) < MH && Math.abs(z - mo[1]) < MH) h[j * n + i] = mreal[clamp(Math.round((z - mo[1] + MH) / HC), 0, CN - 1) * CN + clamp(Math.round((x - mo[0] + MH) / HC), 0, CN - 1)];
       else if (wreal) h[j * n + i] = wreal[clamp(Math.round((z + HALF) / CC), 0, CN - 1) * CN + clamp(Math.round((x + HALF) / CC), 0, CN - 1)];
     }
     return h;
@@ -41,6 +42,7 @@ function prevPaint(ctx, h, n, W, size, water) {
     if (v < water) { const t = clamp((water - v) / 25, 0, 1); c = [lerp(70, 28, t), lerp(140, 82, t), lerp(190, 150, t)]; }
     else {
       c = prevLand(v);
+      if (PREV.sand && v > 2.5) { const s = PREV.sand(-size / 2 + (i + 0.5) * cell, -size / 2 + (j + 0.5) * cell); if (s > 0) c = [lerp(c[0], 222, s), lerp(c[1], 198, s), lerp(c[2], 140, s)]; }
       const gx = h[j * n + Math.min(n - 1, i + 1)] - h[j * n + Math.max(0, i - 1)], gz = h[Math.min(n - 1, j + 1) * n + i] - h[Math.max(0, j - 1) * n + i];
       const sh = clamp(1 - (gx + gz) / (2 * cell) * 2.2, 0.55, 1.35); c = c.map(q => q * sh);
     }
@@ -73,6 +75,7 @@ async function drawMapPreview() {
   if (!pc) {
     pc = PREV.cache[key] = { big: prevGrid(id, seed, MAP, real ? 320 : 200), small: prevGrid(id, seed, OHALF * 2, real ? 256 : 160) };
   }
+  PREV.sand = mapSandFn(MAPS[id]);
   // 1) tutta la mappa
   const cv = $('mpBig'), W = cv.width, ctx = cv.getContext('2d');
   prevPaint(ctx, pc.big, real ? 320 : 200, W, MAP, real ? 0.5 : 0);

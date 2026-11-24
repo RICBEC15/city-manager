@@ -77,9 +77,15 @@ function polyDist(p, x, z) { let b = 1e9; for (let k = 0; k < p.length - 1; k++)
 // estende i fiumi oltre la vecchia mappa (continuano dritti fino al bordo del mondo)
 function extendFeatures(M) {
   if (!M.f || M.fx) return; M.fx = true;
-  for (const f of M.f) if (f.t === 'river') { const p = f.p, ext = (a, b) => { const dx = a[0] - b[0], dz = a[1] - b[1], l = Math.hypot(dx, dz) || 1; return [a[0] + dx / l * 60000, a[1] + dz / l * 60000]; }; f.p = [ext(p[0], p[1]), ...p, ext(p[p.length - 1], p[p.length - 2])]; }
+  for (const f of M.f) if (f.t === 'river' && f.ext !== 'none') { const p = f.p, ext = (a, b) => { const dx = a[0] - b[0], dz = a[1] - b[1], l = Math.hypot(dx, dz) || 1; return [a[0] + dx / l * 60000, a[1] + dz / l * 60000]; }; f.p = [...(f.ext === 'b' ? [] : [ext(p[0], p[1])]), ...p, ...(f.ext === 'a' ? [] : [ext(p[p.length - 1], p[p.length - 2])])]; }
 }
 let PN1 = null, PN2 = null;
+// colori e risorse del terreno che cambiano da mappa a mappa: rocce e neve più in alto sulle Alpi, sabbia nel deserto, tundra in Alaska
+const TFX = { rock: 380, snow: 600, fert: 60, forest: 520, gw: 400, sand: null, tundra: 0 };
+let DESN = null; // rumore fisso per il bordo del deserto (uguale anche nell'anteprima del menu)
+function desertMask(f, x, z) { const far = smooth(5000, 15000, Math.hypot(x, z)); if (!DESN) DESN = makeNoise(4242); return smooth(f.off, f.off + f.w, x * f.n[0] + z * f.n[1] + Math.sin(x / 2300) * 600 + Math.sin(z / 1700 + 1.3) * 450 + (far > 0 ? far * (DESN(x / 18000 + 5.1, z / 18000 - 3.3) * 15000 + Math.sin(z / 9000 + 0.7) * 2500) : 0)); }
+function mapSandFn(M) { const ds = ((M && M.f) || []).filter(f => f.t === 'desert'); if (!ds.length) return null; return (x, z) => { let m = 0; for (const f of ds) m = Math.max(m, desertMask(f, x, z)); return m; }; }
+function setTFX(M) { M = M || {}; TFX.rock = M.rockH ?? 380; TFX.snow = M.snowH ?? 600; TFX.fert = M.fertH ?? 60; TFX.forest = M.forestH ?? 520; TFX.gw = M.gwH ?? 400; TFX.sand = mapSandFn(M); TFX.tundra = M.tundra || 0; }
 // rilievo lontano dal centro: colline basse, pianure e qua e là gruppi di montagne
 function farRelief(x, z, k) {
   const hills = (fbm(PN1, x / 11000, z / 11000, 3) * 0.5 + 0.5) * 70;
@@ -89,17 +95,19 @@ function farRelief(x, z, k) {
 }
 function presetAt(M, x, z) {
   let h = 14 + fbm(PN1, x / 3200, z / 3200, 4) * 40 * M.hill;
-  const corr = 1 - 0.9 * smooth(650, 300, Math.abs(z + 950));
+  const corr = 1 - 0.9 * smooth(650, 300, Math.abs(z + 950)) * (M.corrX ? smooth(M.corrX + 3000, M.corrX, Math.abs(x)) : 1);
   const ridge = Math.max(0, 1 - Math.abs(fbm(PN2, x / 1900, z / 1900, 5) * 1.6));
-  let sw = -1e9, isl = -1e9; // sw > 0 dentro l'acqua
+  let sw = -1e9, isl = -1e9, wb = null, wq = null; // sw > 0 dentro l'acqua
   for (const f of M.f) {
-    const wn = f.wig ? fbm(NOISE, x / 2300 + 5.3, z / 2300 - 2.1, 4) * f.wig * 4.5 : NOISE(x / 900, z / 900) * 25;
-    if (f.t === 'sea') sw = Math.max(sw, x * f.n[0] + z * f.n[1] - f.off + wn);
+    const wn = f.t === 'sea' || f.t === 'disc' ? (f.wig ? (wb ??= fbm(NOISE, x / 2300 + 5.3, z / 2300 - 2.1, 4)) * f.wig * 4.5 : (wq ??= NOISE(x / 900, z / 900)) * 25) : 0;
+    if (f.t === 'sea') sw = Math.max(sw, x * f.n[0] + z * f.n[1] - f.off + wn + (f.big ? NOISE(x / 16000 + 2.2, z / 16000 - 1.3) * f.big * smooth(5000, 15000, Math.hypot(x, z)) : 0));
     else if (f.t === 'river') sw = Math.max(sw, f.w - polyDist(f.p, x, z) + NOISE(x / 600, z / 600) * f.w * 0.15);
     else if (f.t === 'disc') sw = Math.max(sw, f.r - Math.hypot(x - f.c[0], z - f.c[1]) + wn);
     else if (f.t === 'island') { const d = Math.hypot(x - f.c[0], z - f.c[1]) + NOISE(x / 400, z / 400) * f.r * 0.35; isl = Math.max(isl, f.r - d); if (d < f.r) h = Math.max(h, 3) + f.hgt * smooth(f.r, f.r * 0.2, d) * (0.7 + ridge * 0.6); }
     else if (f.t === 'peak') { const d = Math.hypot(x - f.c[0], z - f.c[1]); h += f.hgt * (1 - smooth(0, f.r, d)) ** 1.6 * (0.6 + ridge * 0.6) * corr; }
-    else if (f.t === 'range') { const m = smooth(f.off, f.off + f.width, x * f.n[0] + z * f.n[1]) * corr * (1 - 0.85 * smooth(7000, 16000, Math.max(Math.abs(x), Math.abs(z)))); h += m * (ridge ** 2 * f.hgt + f.hgt * 0.12); }
+    else if (f.t === 'range') { const m = smooth(f.off, f.off + f.width, x * f.n[0] + z * f.n[1] + (f.rw ? NOISE(x / 4000 + 1.9, z / 4000 - 0.6) * f.rw : 0)) * corr * (1 - (f.keep == null ? 0.85 : 1 - f.keep) * smooth(7000, 16000, Math.max(Math.abs(x), Math.abs(z)))); h += m * (ridge ** 2 * f.hgt + f.hgt * 0.12); }
+    else if (f.t === 'desert') { const m = desertMask(f, x, z); if (m > 0) h += m * (Math.abs(NOISE(x / 190 + 3.3, z / 520 - 1.1)) * 16 + 3); }
+    else if (f.t === 'lakes') { const m = smooth(f.r0 || 0, (f.r0 || 0) + 2500, Math.hypot(x + 640, z - 640)), u = x / f.s, v = z / f.s, wq2 = NOISE(u * 0.35 + 1.7, v * 0.35 - 2.9) * 0.9, dens = NOISE(x / 26000 - 7.7, z / 26000 + 4.4) * 0.3; sw = Math.max(sw, (fbm(NOISE, u * 0.7 + wq2 + 9.1, v * 1.3 - wq2 * 0.6 - 4.7, 4) - f.th + dens - (1 - m) * 0.6) * f.s * 0.9); }
     else if (f.t === 'volcano') { const d = Math.hypot(x - f.c[0], z - f.c[1]) + NOISE(x / 500, z / 500) * 160; const cone = (1 - smooth(0, f.r, d)) ** 1.4 * f.hgt * corr; const crater = (1 - smooth(f.r * 0.04, f.r * 0.1, d)) * f.hgt * 0.12 * corr; h += cone - crater + (d < f.r ? ridge * 70 * corr : 0); }
   }
   // fuori dalla vecchia mappa: colline e montagne lontane
@@ -122,7 +130,7 @@ const MAPS_READY = (async () => {
     try {
       const bin = atob(MAPDATA[k]), buf = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
       const ab = await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
-      const n = k.startsWith('w_') ? CN : OHN, dl = new Int16Array(ab), h = new Float32Array(n * n);
+      const n = (k.startsWith('w_') || k.startsWith('m_')) ? CN : OHN, dl = new Int16Array(ab), h = new Float32Array(n * n);
       for (let j = 0; j < n; j++) { let q = 0; for (let i = 0; i < n; i++) { q += dl[j * n + i]; h[j * n + i] = q / 2; } }
       MAPH[k] = h; MAPS_PROG = ++done / keys.length;
     } catch (e) { console.error('mappa', k, e); }
@@ -133,9 +141,9 @@ function genTerrain(seed, mapId) { runSync(genTerrainG(seed, mapId)); }
 function* genTerrainG(seed, mapId) {
   NOISE = makeNoise(seed); PN1 = makeNoise(seed + 11); PN2 = makeNoise(seed + 23);
   MAPID = MAPS[mapId] ? mapId : 'valley';
-  const M = MAPS[MAPID]; if (MAPID !== 'valley') extendFeatures(M);
+  const M = MAPS[MAPID]; if (MAPID !== 'valley') extendFeatures(M); setTFX(M);
   const at = MAPID === 'valley' ? valleyAt : (x, z) => presetAt(M, x, z);
-  const real = MAPH[MAPID], wreal = MAPH['w_' + MAPID];
+  const real = MAPH[MAPID], wreal = MAPH['w_' + MAPID], mreal = MAPH['m_' + MAPID];
   // 1) grezzo
   const CH = new Float32Array(CN * CN), CW = new Float32Array(CN * CN);
   for (let j = 0; j < CN; j++) for (let i = 0; i < CN; i++) {
@@ -147,6 +155,11 @@ function* genTerrainG(seed, mapId) {
   // 2) dettaglio: rilievo fine sulla terra (senza toccare coste e acqua)
   const dn = makeNoise(seed + 77);
   for (let j = 0; j < HN; j++) { if (j % 400 === 399) yield 0.25 + 0.5 * j / HN; const z = -HALF + j * HC; for (let i = 0; i < HN; i++) { const x = -HALF + i * HC; let h = cS(CH, x, z); if (h > 4) h += (dn(x / 700, z / 700) * 9 + dn(x / 230, z / 230) * 3) * smooth(4, 30, h); H[j * HN + i] = h; } }
+  // 2b) riquadro medio vero (40 m, 25,6 km) per le mappe che ce l'hanno, con i bordi sfumati
+  if (mreal && M.mid) {
+    const MH = (CN - 1) * HC / 2, i0 = Math.round((M.mid[0] - MH + HALF) / HC), j0 = Math.round((M.mid[1] - MH + HALF) / HC);
+    for (let b = 0; b < CN; b++) { const j = j0 + b; if (j < 0 || j >= HN) continue; for (let a = 0; a < CN; a++) { const i = i0 + a; if (i < 0 || i >= HN) continue; const k = j * HN + i; H[k] = lerp(H[k], mreal[b * CN + a], smooth(0, 1200, Math.min(a, b, CN - 1 - a, CN - 1 - b) * HC)); } }
+  }
   yield 0.78;
   // 3) centro preciso: la vecchia mappa (uguale a prima, così i salvataggi vecchi funzionano)
   const n = Math.ceil(DETR / HC), c = (HN - 1) / 2;
@@ -197,11 +210,13 @@ function genResources(seed) {
   for (let j = 0; j < G; j++) for (let i = 0; i < G; i++) {
     const x = -HALF + (i + 0.5) * GC, z = -HALF + (j + 0.5) * GC, h = getH(x, z), k = j * G + i;
     const sl = slopeAt(x, z);
-    RES.fert[k] = h > 1 && h < 60 && sl < 0.08 ? clamp(0.3 + NOISE(x / 900, z / 900) * 1.2 + (1 - smooth(200, 1600, WD[k])) * 0.5, 0, 1) : 0;
-    RES.forest[k] = h > 2 && h < 520 ? clamp(fbm(n3, x / 1400, z / 1400, 3) * 2.2 + 0.15, 0, 1) : 0;
+    RES.fert[k] = h > 1 && h < TFX.fert && sl < 0.08 ? clamp(0.3 + NOISE(x / 900, z / 900) * 1.2 + (1 - smooth(200, 1600, WD[k])) * 0.5, 0, 1) : 0;
+    RES.forest[k] = h > 2 && h < TFX.forest ? clamp(fbm(n3, x / 1400, z / 1400, 3) * 2.2 + 0.15, 0, 1) : 0;
     RES.oil[k] = h > 1 ? clamp((n4(x / 1100, z / 1100) - 0.28) * 4, 0, 1) : 0;
-    RES.gw[k] = h > 1.5 && h < 400 ? clamp(fbm(n5, x / 1300, z / 1300, 3) * 2.4 - 0.02 + (1 - smooth(150, 1200, WD[k])) * 0.25, 0, 1) : 0;
+    RES.gw[k] = h > 1.5 && h < TFX.gw ? clamp(fbm(n5, x / 1300, z / 1300, 3) * 2.4 - 0.02 + (1 - smooth(150, 1200, WD[k])) * 0.25, 0, 1) : 0;
     RES.ore[k] = h > 60 ? clamp((n4(x / 800 + 50, z / 800) - 0.18) * 3 + smooth(80, 300, h) * 0.4, 0, 1) : 0;
+    if (TFX.sand) { const s = TFX.sand(x, z); if (s > 0) { RES.fert[k] *= 1 - s; RES.forest[k] *= 1 - s; RES.gw[k] *= 1 - s * 0.7; } }
+    if (TFX.tundra) RES.fert[k] *= 1 - TFX.tundra * 0.5;
   }
 }
 function getH(x, z) {
