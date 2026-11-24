@@ -61,6 +61,7 @@ function edgePos(e, s, lane, v) {
 function canEnter(e2, lane, need) { const ln = e2.cars[lane]; let m = 1e9; for (const o of ln) if (o.s < m) m = o.s - o.l; return m > need; }
 function bestLane(e2) { let best = 0, bs = -1e9; for (let k = 0; k < e2.cars.length; k++) { let m = 1e9; for (const o of e2.cars[k]) m = Math.min(m, o.s - o.l); m += rand() * 4; if (m > bs) { bs = m; best = k; } } return best; }
 
+function bestLaneV(v, e2) { return bestLane(e2); } // le regole delle corsie stanno in 29-mod-strade.js
 function updateVehicles(dt) {
   if (dt <= 0) return;
   simClock += dt;
@@ -85,7 +86,7 @@ function updateVehicles(dt) {
           if (nl && nl.e.seg.open && !k.rail && toEnd > 1.5) block = true; // ponte levatoio aperto
           // stop: ci si ferma un attimo davanti all'incrocio e poi si riparte
           if (nd && nd.stop && !k.rail && !emerg && v.stopLi !== v.li) { if (toEnd < 3 && v.v < 1) { v.stopLi = v.li; v.wait = 0.8; } else block = true; }
-          if (!block && nl) { if (v.nextLane == null) v.nextLane = bestLane(nl.e); const gapIn = nl.e.seg.ring && !e.seg.ring ? v.l + 9 : v.l + 1.5; if (!canEnter(nl.e, v.nextLane, gapIn)) { v.nextLane = bestLane(nl.e); block = !canEnter(nl.e, v.nextLane, gapIn); } }
+          if (!block && nl) { if (v.nextLane == null) v.nextLane = bestLaneV(v, nl.e, v.li + 1); const gapIn = nl.e.seg.ring && !e.seg.ring ? v.l + 9 : v.l + 1.5; if (!canEnter(nl.e, v.nextLane, gapIn)) { v.nextLane = bestLaneV(v, nl.e, v.li + 1); block = !canEnter(nl.e, v.nextLane, gapIn); } }
           if (block) gap = Math.min(gap, toEnd - 1);
         }
         if (v.stopAt != null) gap = Math.min(gap, v.stopAt - v.s + 0.5);
@@ -98,7 +99,7 @@ function updateVehicles(dt) {
         if (v.stopAt != null && v.s >= v.stopAt - 0.5) { v.s = Math.min(v.s, v.stopAt); const cb = v.onStop; v.stopAt = null; v.onStop = null; if (cb) cb(v); continue; }
         if (v.s >= leg.s1) {
           if (last) { arrive(v); i--; continue; }
-          const nl = v.legs[v.li + 1]; const lane = v.nextLane ?? bestLane(nl.e);
+          const nl = v.legs[v.li + 1]; const lane = v.nextLane ?? bestLaneV(v, nl.e, v.li + 1);
           if (nl.e.dead) { despawnVehicle(v); i--; continue; }
           ln.splice(i, 1); i--;
           v.li++; v.s = nl.s0 + (v.s - leg.s1); v.lane = Math.min(lane, nl.e.cars.length - 1); v.pi = 0; v.nextLane = null;
