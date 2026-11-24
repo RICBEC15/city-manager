@@ -506,7 +506,7 @@ const lHouse = new InstPool(boxGeo, new THREE.MeshLambertMaterial({ color: 0x2a2
 // ---------- 29: neve che si accumula, tracce delle gomme, scioglimento lento ----------
 const snowTrack = new InstPool(boxGeo, new THREE.MeshBasicMaterial({ color: 0x6d7076, transparent: true, opacity: 0.55, depthWrite: false }), 5000);
 snowTrack.mesh.renderOrder = 3;
-const _snowCol2 = new THREE.Color(0xf4f7fb);
+const ROAD_TINT = new THREE.Color(1, 1, 1);
 let snowT = 0;
 {
   const _us = updateSky;
@@ -523,7 +523,7 @@ let snowT = 0;
     WEATHER.roadSnow = rs;
     WEATHER.snowRoad = rs > 0.45;
     const k = SET.noSnow ? 0 : Math.max(WEATHER.snow * 0.18, rs * 0.95);
-    if (Math.abs((updateSky.rk2 ?? -1) - k) > 0.01 || updateSky.rk !== updateSky.rk3) { updateSky.rk2 = k; updateSky.rk3 = updateSky.rk; for (const t in roadMats) roadMats[t].color.setScalar(1).lerp(_snowCol, k); }
+    if (Math.abs((updateSky.rk2 ?? -1) - k) > 0.01 || updateSky.rk !== updateSky.rk3) { updateSky.rk2 = k; updateSky.rk3 = updateSky.rk; for (const t in roadMats) roadMats[t].color.copy(ROAD_TINT).lerp(_snowCol, k); }
     return r;
   };
 }
