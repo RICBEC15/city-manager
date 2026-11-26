@@ -333,7 +333,7 @@ function czCreate() {
   const name = ($('czName')?.value || '').trim().slice(0, 24), base = +($('czBase')?.value || 1), col = parseInt(($('czCol')?.value || '#ff8800').slice(1), 16);
   if (!name) { toast(L('Scrivi un nome', 'Type a name'), 1500); return; }
   const looks = [...document.querySelectorAll('.czLook:checked')].map(e => +e.value);
-  S.czones = S.czones || []; const id = Math.max(29, ...S.czones.map(c => c.id)) + 1;
+  S.czones = S.czones || []; let id = Math.max(29, ...S.czones.map(c => c.id)) + 1; if (id >= 100 && id < 200) id = 200; // 100-199 sono gli stili del blocco 5
   const c = { id, name, base, col, looks: looks.length ? looks : [base] }; S.czones.push(c); czRegister([c]);
   toast('🧩 ' + name + ' ✓', 1500); buildSub();
 }
